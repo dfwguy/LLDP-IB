@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: QoS Report</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .sl-vl-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 8px; }
+        .sl-vl-cell { background: #1a1a1a; padding: 6px 8px; border-radius: 4px; text-align: center; font-size: 12px; }
+        .sl-vl-cell .sl { color: #76b900; font-weight: 600; }
+        .sl-vl-cell .arr { color: #555; margin: 0 4px; }
+        .sl-vl-cell .vl { color: #4fc3f7; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">QoS / Service Level Mapping</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-total"><div class="card-value" id="total-profiles">-</div><div class="card-label">QoS Profiles</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="devices-polled">-</div><div class="card-label">Devices Polled</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="inconsistency-count">-</div><div class="card-label">Inconsistencies</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="consistent-count">-</div><div class="card-label">Consistent Profiles</div></div>
+    </div>
+
+    <div id="profile-list"><div class="loading"><div class="spinner"></div>Loading QoS profiles...</div></div>
+
+<script>
+let allProfiles = [];
+
+document.addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+    try {
+        const resp = await fetch('/monitor-results/ib_qos.json', {cache: 'no-store'});
+        const data = await resp.json();
+        allProfiles = data.profiles || [];
+        const s = data.summary || {};
+        document.getElementById('last-updated').textContent = data.last_update
+            ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        document.getElementById('total-profiles').textContent = s.total_profiles || 0;
+        document.getElementById('devices-polled').textContent = s.devices_polled || 0;
+        document.getElementById('inconsistency-count').textContent = s.inconsistencies || 0;
+        document.getElementById('consistent-count').textContent = allProfiles.filter(p => p.consistent).length;
+
+        if (s.inconsistencies > 0) {
+            document.getElementById('banner').innerHTML =
+                `<div class="alert-box alert-warning"><strong>${s.inconsistencies} QoS inconsistencies detected.</strong> Same profile name has different SL-to-VL mappings on different switches.</div>`;
+        }
+        render();
+    } catch (e) {
+        document.getElementById('profile-list').innerHTML =
+            '<div class="no-data"><h3>No QoS data yet</h3><p>Wait for the next monitor cycle.</p></div>';
+    }
+}
+
+function render() {
+    const root = document.getElementById('profile-list');
+    if (allProfiles.length === 0) {
+        root.innerHTML = '<div class="no-data"><h3>No QoS profiles found</h3></div>';
+        return;
+    }
+    root.innerHTML = allProfiles.map(p => {
+        const status = p.consistent
+            ? '<span class="badge badge-green">consistent</span>'
+            : '<span class="badge badge-yellow">inconsistent</span>';
+        const sl2vl = Object.entries(p.sl_to_vl || {})
+            .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+            .map(([sl, vl]) => `<div class="sl-vl-cell"><span class="sl">SL ${sl}</span><span class="arr">→</span><span class="vl">VL ${vl}</span></div>`)
+            .join('');
+        return `
+            <div class="table-container" style="margin-bottom: 20px; padding: 16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div>
+                        <strong style="font-size:15px;">${p.name}</strong>
+                        <span style="color:#888;font-size:12px;margin-left:8px;">on ${p.device_count} device(s)</span>
+                    </div>
+                    ${status}
+                </div>
+                <div style="color:#888;font-size:12px;margin-bottom:6px;">Devices: ${(p.devices||[]).join(', ')}</div>
+                ${sl2vl ? `<div class="sl-vl-grid">${sl2vl}</div>` : '<div style="color:#888;font-size:12px;">No SL-to-VL mapping defined</div>'}
+            </div>`;
+    }).join('');
+}
+</script>
+</body>
+</html>

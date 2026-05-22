@@ -1,0 +1,8 @@
+.cursor/
+.vagrant/
+.DS_Store
+.ansible-test/
+__pycache__
+.cache
+.vscode
+IMPROVEMENT_PLAN.md

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>..::LLDPQ-IB:: Topology</title>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <link rel="stylesheet" href="/css/lldpq-ib.css">
+    <script src="/css/auth.js"></script>
+    <script src="cytoscape.min.js"></script>
+    <script src="dagre.min.js"></script>
+    <script src="cytoscape-dagre.js"></script>
+    <style>
+        body { padding: 16px; }
+        .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+        .toolbar .stats { color: #888; font-size: 13px; margin-left: auto; }
+        #cy { width: 100%; height: calc(100vh - 200px); background: #1a1a1a; border-radius: 6px; border: 1px solid #333; }
+        .legend { display: flex; gap: 14px; font-size: 12px; align-items: center; margin-top: 8px; color: #aaa; }
+        .legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        .info-panel { position: absolute; right: 36px; top: 130px; background: rgba(37, 37, 38, 0.95); border: 1px solid #404040; border-radius: 6px; padding: 12px 14px; min-width: 260px; max-width: 320px; font-size: 12px; display: none; z-index: 10; }
+        .info-panel h4 { color: #76b900; margin-bottom: 6px; font-size: 13px; }
+        .info-panel .kv { display: grid; grid-template-columns: 92px 1fr; gap: 4px; }
+        .info-panel .k { color: #888; }
+        .info-panel .v { color: #ddd; word-break: break-all; }
+        .info-panel .links-list { margin-top: 8px; max-height: 200px; overflow-y: auto; }
+        .info-panel .links-list .row { padding: 3px 0; border-top: 1px solid #2d2d2d; font-size: 11px; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Topology</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <select id="layout-select" class="btn btn-secondary" onchange="reLayout()" style="background:#2d2d2d;color:#fff;">
+                <option value="dagre">Hierarchical</option>
+                <option value="concentric">Concentric</option>
+                <option value="circle">Circle</option>
+                <option value="grid">Grid</option>
+                <option value="cose">Force-Directed</option>
+            </select>
+            <button class="btn btn-secondary" onclick="fitGraph()">Fit</button>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <div class="filter-group">
+            <label>Filter</label>
+            <select id="filter-type" onchange="applyFilter()" style="background:#2d2d2d;color:#fff;border:1px solid #404040;padding:5px 8px;border-radius:4px;">
+                <option value="">All Nodes</option>
+                <option value="switch">Switches Only</option>
+                <option value="switch+hca">Switches + HCAs</option>
+            </select>
+        </div>
+        <div class="stats" id="topology-stats">Loading...</div>
+    </div>
+
+    <div id="cy"></div>
+
+    <div class="legend">
+        <span><span class="dot" style="background:#76b900;"></span>Switch</span>
+        <span><span class="dot" style="background:#4fc3f7;"></span>HCA (Host)</span>
+        <span><span class="dot" style="background:#ba68c8;"></span>Router</span>
+        <span style="margin-left: 24px; color: #666;">Click a node for details</span>
+    </div>
+
+    <div class="info-panel" id="info-panel">
+        <h4 id="info-title">Node Info</h4>
+        <div class="kv" id="info-kv"></div>
+        <div class="links-list" id="info-links"></div>
+    </div>
+
+<script>
+let cy = null;
+let topoData = null;
+
+document.addEventListener('DOMContentLoaded', loadTopology);
+
+async function loadTopology() {
+    try {
+        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
+        topoData = await resp.json();
+        document.getElementById('last-updated').textContent = topoData.last_update
+            ? 'Last Updated: ' + new Date(topoData.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        const s = topoData.summary || {};
+        document.getElementById('topology-stats').textContent =
+            `${s.total_nodes || 0} nodes (${s.switches || 0} switches, ${s.hcas || 0} HCAs), ${s.total_links || 0} links`;
+        renderGraph();
+    } catch (e) {
+        document.getElementById('cy').innerHTML =
+            '<div class="no-data" style="padding:80px 20px;"><h3>No topology data yet</h3><p>Wait for the next monitor cycle.</p></div>';
+    }
+}
+
+function renderGraph() {
+    const filter = document.getElementById('filter-type').value;
+    const nodes = (topoData.nodes || []).filter(n => {
+        if (!filter) return true;
+        if (filter === 'switch') return n.type === 'switch';
+        if (filter === 'switch+hca') return n.type === 'switch' || n.type === 'hca';
+        return true;
+    });
+    const guidSet = new Set(nodes.map(n => n.guid));
+    const links = (topoData.links || []).filter(l =>
+        guidSet.has(l.source_guid) && guidSet.has(l.target_guid));
+
+    const elements = [
+        ...nodes.map(n => ({
+            data: {
+                id: n.guid,
+                label: n.description || n.guid.slice(-6),
+                type: n.type,
+                lid: n.lid,
+                description: n.description || '',
+            }
+        })),
+        ...links.map((l, i) => ({
+            data: {
+                id: `e${i}`,
+                source: l.source_guid,
+                target: l.target_guid,
+                label: `${l.speed || ''}`,
+                src_port: l.source_port,
+                tgt_port: l.target_port,
+                speed: l.speed,
+            }
+        })),
+    ];
+
+    if (cy) cy.destroy();
+    cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: elements,
+        wheelSensitivity: 0.2,
+        style: [
+            {
+                selector: 'node',
+                style: {
+                    'background-color': '#888',
+                    'label': 'data(label)',
+                    'color': '#ddd',
+                    'font-size': '11px',
+                    'text-valign': 'bottom',
+                    'text-margin-y': 6,
+                    'text-outline-color': '#1a1a1a',
+                    'text-outline-width': 2,
+                    'width': '40px',
+                    'height': '40px',
+                    'border-width': '1px',
+                    'border-color': '#222',
+                }
+            },
+            { selector: 'node[type="switch"]', style: { 'background-color': '#76b900', 'shape': 'roundrectangle', 'width': '52px', 'height': '36px' } },
+            { selector: 'node[type="hca"]',    style: { 'background-color': '#4fc3f7', 'shape': 'ellipse', 'width': '32px', 'height': '32px' } },
+            { selector: 'node[type="router"]', style: { 'background-color': '#ba68c8', 'shape': 'diamond' } },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 1.5,
+                    'line-color': '#444',
+                    'target-arrow-shape': 'none',
+                    'curve-style': 'bezier',
+                    'label': 'data(label)',
+                    'font-size': '8px',
+                    'color': '#666',
+                    'text-rotation': 'autorotate',
+                    'text-background-color': '#1a1a1a',
+                    'text-background-padding': '1px',
+                    'text-background-opacity': 0.7,
+                }
+            },
+            { selector: ':selected', style: { 'border-color': '#ff9800', 'border-width': '3px' } },
+        ],
+        layout: layoutConfig(document.getElementById('layout-select').value),
+    });
+
+    cy.on('tap', 'node', evt => showNodeInfo(evt.target));
+    cy.on('tap', (evt) => {
+        if (evt.target === cy) document.getElementById('info-panel').style.display = 'none';
+    });
+}
+
+function layoutConfig(name) {
+    switch (name) {
+        case 'dagre': return { name: 'dagre', rankDir: 'TB', nodeSep: 60, rankSep: 80 };
+        case 'concentric': return { name: 'concentric', concentric: n => n.data('type') === 'switch' ? 2 : 1, levelWidth: () => 1 };
+        case 'circle': return { name: 'circle' };
+        case 'grid': return { name: 'grid' };
+        case 'cose': return { name: 'cose', animate: false, nodeRepulsion: 8000 };
+        default: return { name: 'dagre' };
+    }
+}
+
+function reLayout() {
+    if (!cy) return;
+    cy.layout(layoutConfig(document.getElementById('layout-select').value)).run();
+}
+
+function fitGraph() { if (cy) cy.fit(null, 30); }
+
+function applyFilter() { renderGraph(); }
+
+function showNodeInfo(node) {
+    const data = node.data();
+    document.getElementById('info-title').textContent = data.description || data.label;
+    const kv = document.getElementById('info-kv');
+    kv.innerHTML = `
+        <div class="k">GUID</div><div class="v">${data.id}</div>
+        <div class="k">Type</div><div class="v">${data.type || '-'}</div>
+        <div class="k">LID</div><div class="v">${data.lid != null ? data.lid : '-'}</div>
+        <div class="k">Description</div><div class="v">${data.description || '-'}</div>
+    `;
+    // Show connected links
+    const myGuid = data.id;
+    const links = (topoData.links || []).filter(l =>
+        l.source_guid === myGuid || l.target_guid === myGuid);
+    document.getElementById('info-links').innerHTML = links.length === 0
+        ? '<div style="color:#888; margin-top:8px;">No links</div>'
+        : `<div style="margin-top:8px; color:#76b900; font-weight:600;">Links (${links.length})</div>` +
+          links.map(l => {
+              const isLocal = l.source_guid === myGuid;
+              const localPort = isLocal ? l.source_port : l.target_port;
+              const remoteGuid = isLocal ? l.target_guid : l.source_guid;
+              const remotePort = isLocal ? l.target_port : l.source_port;
+              const remoteDesc = isLocal ? l.target_desc : l.source_desc;
+              return `<div class="row">port ${localPort} → ${remoteDesc || remoteGuid.slice(-6)} (port ${remotePort}) <span style="color:#ff9800; float:right;">${l.speed || ''}</span></div>`;
+          }).join('');
+    document.getElementById('info-panel').style.display = 'block';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Link Errors</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .delta-cell { text-align: right; }
+        .delta-cell.bad { color: #f44336; font-weight: 600; }
+        .delta-cell.warn { color: #ff9800; font-weight: 600; }
+        .delta-cell.ok { color: #888; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Link Errors</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-danger"><div class="card-value" id="critical-count">-</div><div class="card-label">Critical</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="warning-count">-</div><div class="card-label">Warning</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="flapping-1h">-</div><div class="card-label">Flapping (1h)</div></div>
+        <div class="summary-card card-total"><div class="card-value" id="total-ports">-</div><div class="card-label">Ports Monitored</div></div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>Severity</label>
+            <select id="filter-severity" onchange="renderTable()">
+                <option value="">All</option>
+                <option value="critical">Critical only</option>
+                <option value="warning">Warning only</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Device</label>
+            <select id="filter-device" onchange="renderTable()">
+                <option value="">All Devices</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Search</label>
+            <input type="text" id="filter-search" placeholder="Port / GUID..." oninput="renderTable()" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Device</th>
+                    <th>Port</th>
+                    <th>Severity</th>
+                    <th class="delta-cell">LinkDowned (Δ)</th>
+                    <th class="delta-cell">SymbolErrors (Δ)</th>
+                    <th class="delta-cell">LinkRecovery (Δ)</th>
+                    <th class="delta-cell">RcvErrors (Δ)</th>
+                    <th class="delta-cell">XmitDiscards (Δ)</th>
+                    <th>Flaps 1h</th>
+                    <th>Flaps 24h</th>
+                </tr>
+            </thead>
+            <tbody id="errors-table">
+                <tr><td colspan="10"><div class="loading"><div class="spinner"></div>Loading link error data...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+let allPorts = [];
+
+document.addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+    try {
+        const resp = await fetch('/monitor-results/ib_link_errors.json', {cache: 'no-store'});
+        const data = await resp.json();
+        allPorts = data.problem_ports || [];
+        const s = data.summary || {};
+        document.getElementById('last-updated').textContent = data.last_update
+            ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        document.getElementById('critical-count').textContent = s.critical_count || 0;
+        document.getElementById('warning-count').textContent = s.warning_count || 0;
+        document.getElementById('flapping-1h').textContent = s.flapping_1h || 0;
+        document.getElementById('total-ports').textContent = data.total_ports_monitored || 0;
+
+        if (s.critical_count > 0) {
+            document.getElementById('banner').innerHTML =
+                `<div class="alert-box alert-danger"><strong>${s.critical_count} ports in critical state.</strong> Take immediate action.</div>`;
+        } else if (s.warning_count > 0) {
+            document.getElementById('banner').innerHTML =
+                `<div class="alert-box alert-warning"><strong>${s.warning_count} ports with warning-level errors.</strong> Investigate.</div>`;
+        }
+
+        populateFilters();
+        renderTable();
+    } catch (e) {
+        document.getElementById('errors-table').innerHTML =
+            '<tr><td colspan="10"><div class="no-data"><h3>No link error data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+    }
+}
+
+function populateFilters() {
+    const devices = [...new Set(allPorts.map(p => p.device))].sort();
+    const sel = document.getElementById('filter-device');
+    sel.innerHTML = '<option value="">All Devices</option>' +
+        devices.map(d => `<option value="${d}">${d}</option>`).join('');
+}
+
+function renderTable() {
+    const sev = document.getElementById('filter-severity').value;
+    const dev = document.getElementById('filter-device').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+
+    let filtered = allPorts;
+    if (sev) filtered = filtered.filter(p => p.severity === sev);
+    if (dev) filtered = filtered.filter(p => p.device === dev);
+    if (search) filtered = filtered.filter(p => `${p.device} ${p.port}`.toLowerCase().includes(search));
+
+    const tbody = document.getElementById('errors-table');
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10"><div class="no-data"><h3>No problem ports</h3><p>All monitored ports are clean.</p></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = filtered.map(p => {
+        const delta = p.delta || {};
+        const cell = (key, threshWarn) => {
+            const v = delta[key];
+            if (v == null || v === 0) return '<td class="delta-cell ok">0</td>';
+            const cls = p.severity === 'critical' ? 'bad' : p.severity === 'warning' ? 'warn' : 'ok';
+            return `<td class="delta-cell ${cls}">+${v.toLocaleString()}</td>`;
+        };
+        const sevBadge = p.severity === 'critical'
+            ? '<span class="badge badge-red">CRITICAL</span>'
+            : p.severity === 'warning'
+                ? '<span class="badge badge-yellow">WARNING</span>'
+                : '<span class="badge badge-gray">normal</span>';
+        return `<tr>
+            <td>${p.device}</td>
+            <td class="mono">${p.port}</td>
+            <td>${sevBadge}</td>
+            ${cell('LinkDownedCounter')}
+            ${cell('SymbolErrorCounter')}
+            ${cell('LinkErrorRecoveryCounter')}
+            ${cell('PortRcvErrors')}
+            ${cell('PortXmitDiscards')}
+            <td>${p.flaps_1h || 0}</td>
+            <td>${p.flaps_24h || 0}</td>
+        </tr>`;
+    }).join('');
+}
+</script>
+</body>
+</html>

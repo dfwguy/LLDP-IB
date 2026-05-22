@@ -1,0 +1,9 @@
+# Test fixture devices.yaml for LLDPq-IB
+# Used with LLDPQ_IB_MOCK=1 to drive parser/monitor tests without real switches.
+
+defaults:
+  username: admin
+
+devices:
+  10.10.100.10: qm-spine01 @spine
+  10.10.100.20: qm-leaf01 @leaf

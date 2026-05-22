@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Tracepath</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .trace-form { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 12px; align-items: end; margin-bottom: 25px; }
+        .trace-form .filter-group { width: 100%; }
+        .trace-form .filter-group select { width: 100%; min-width: 0; }
+        .path-vis { background: #252526; border-radius: 6px; padding: 20px; }
+        .path-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: #1a1a1a; border-radius: 4px; margin-bottom: 6px; }
+        .path-row .hop-num { background: #76b900; color: #000; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; }
+        .path-arrow { text-align: center; color: #76b900; font-size: 18px; margin: 2px 0 2px 18px; }
+        .path-row .node-info { flex: 1; }
+        .path-row .node-name { font-weight: 600; }
+        .path-row .node-guid { font-family: 'Cascadia Code', monospace; font-size: 11px; color: #888; }
+        .path-row .port { font-family: 'Cascadia Code', monospace; font-size: 12px; color: #4fc3f7; }
+        .path-row .speed { font-size: 11px; color: #ff9800; }
+        .live-note { font-size: 12px; color: #888; margin-top: 12px; padding: 8px 12px; background: rgba(79, 195, 247, 0.05); border-left: 2px solid #4fc3f7; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Tracepath</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div class="trace-form">
+        <div class="filter-group">
+            <label>Source (GUID or name)</label>
+            <select id="src">
+                <option value="">-- select source --</option>
+            </select>
+        </div>
+        <div style="font-size: 24px; color: #76b900;">→</div>
+        <div class="filter-group">
+            <label>Destination (GUID or name)</label>
+            <select id="dst">
+                <option value="">-- select destination --</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="trace()">Trace</button>
+    </div>
+
+    <div id="result"></div>
+
+    <div class="live-note">
+        <strong>Note:</strong> This page computes the path from cached <code>ibnetdiscover</code> data (BFS).
+        For live SM-based routing inspection (LFT/MFT), Phase 4 will add an <code>ibtracert</code> CGI endpoint.
+    </div>
+
+<script>
+let topo = null;
+let nodeIndex = {};   // guid -> node
+
+document.addEventListener('DOMContentLoaded', loadTopology);
+
+async function loadTopology() {
+    try {
+        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
+        topo = await resp.json();
+        document.getElementById('last-updated').textContent = topo.last_update
+            ? 'Topology data from: ' + new Date(topo.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        nodeIndex = {};
+        (topo.nodes || []).forEach(n => { nodeIndex[n.guid] = n; });
+        populateDropdowns();
+    } catch (e) {
+        document.getElementById('result').innerHTML =
+            '<div class="no-data"><h3>Topology not loaded</h3><p>Run the IB monitor first.</p></div>';
+    }
+}
+
+function populateDropdowns() {
+    const opts = (topo.nodes || [])
+        .map(n => ({ value: n.guid, label: `${n.description || '(no name)'} (${n.type}, lid ${n.lid})`, type: n.type }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    for (const id of ['src', 'dst']) {
+        const sel = document.getElementById(id);
+        sel.innerHTML = '<option value="">-- select --</option>' +
+            opts.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+    }
+}
+
+function bfs(srcGuid, dstGuid) {
+    // Build adjacency: guid -> list of { neighbor_guid, local_port, remote_port, speed }
+    const adj = {};
+    (topo.links || []).forEach(l => {
+        if (!adj[l.source_guid]) adj[l.source_guid] = [];
+        if (!adj[l.target_guid]) adj[l.target_guid] = [];
+        adj[l.source_guid].push({ to: l.target_guid, lp: l.source_port, rp: l.target_port, speed: l.speed });
+        adj[l.target_guid].push({ to: l.source_guid, lp: l.target_port, rp: l.source_port, speed: l.speed });
+    });
+
+    const visited = new Set([srcGuid]);
+    const queue = [{ guid: srcGuid, path: [] }];
+    while (queue.length) {
+        const { guid, path } = queue.shift();
+        if (guid === dstGuid) return path;
+        for (const next of (adj[guid] || [])) {
+            if (visited.has(next.to)) continue;
+            visited.add(next.to);
+            queue.push({
+                guid: next.to,
+                path: [...path, { from_guid: guid, to_guid: next.to, lp: next.lp, rp: next.rp, speed: next.speed }],
+            });
+        }
+    }
+    return null;
+}
+
+function trace() {
+    const src = document.getElementById('src').value;
+    const dst = document.getElementById('dst').value;
+    const result = document.getElementById('result');
+    if (!src || !dst) {
+        result.innerHTML = '<div class="alert-box alert-warning">Select both source and destination.</div>';
+        return;
+    }
+    if (src === dst) {
+        result.innerHTML = '<div class="alert-box alert-info">Source and destination are the same node.</div>';
+        return;
+    }
+    const path = bfs(src, dst);
+    if (!path) {
+        result.innerHTML = '<div class="alert-box alert-danger">No path found from source to destination in the topology JSON.</div>';
+        return;
+    }
+
+    // Render path
+    const rows = [];
+    const start = nodeIndex[src];
+    rows.push(nodeRow(0, start));
+    path.forEach((hop, i) => {
+        const next = nodeIndex[hop.to_guid];
+        rows.push(`<div class="path-arrow">↓<span style="font-size:11px; margin-left:8px; color:#888;">port ${hop.lp} → port ${hop.rp} (${hop.speed})</span></div>`);
+        rows.push(nodeRow(i + 1, next));
+    });
+    result.innerHTML = `
+        <div class="path-vis">
+            <div style="color:#76b900; margin-bottom: 12px; font-weight: 600;">
+                Path: ${path.length} hop${path.length === 1 ? '' : 's'}
+            </div>
+            ${rows.join('')}
+        </div>`;
+}
+
+function nodeRow(idx, node) {
+    if (!node) return '';
+    const badge = node.type === 'switch'
+        ? '<span class="badge badge-green">switch</span>'
+        : node.type === 'hca'
+            ? '<span class="badge badge-blue">hca</span>'
+            : `<span class="badge badge-gray">${node.type || ''}</span>`;
+    return `
+        <div class="path-row">
+            <div class="hop-num">${idx}</div>
+            <div class="node-info">
+                <div class="node-name">${node.description || '(no name)'} ${badge}</div>
+                <div class="node-guid">${node.guid} (LID ${node.lid != null ? node.lid : '-'})</div>
+            </div>
+        </div>`;
+}
+</script>
+</body>
+</html>

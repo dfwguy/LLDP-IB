@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Telemetry</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .telemetry-card { background: #252526; border-radius: 6px; padding: 20px; margin-bottom: 16px; }
+        .telemetry-card h3 { color: #76b900; font-size: 15px; margin-bottom: 8px; }
+        .telemetry-card .desc { color: #aaa; font-size: 13px; margin-bottom: 12px; }
+        .metric-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+        .metric-item { background: #1a1a1a; padding: 10px 12px; border-radius: 4px; }
+        .metric-item .name { font-size: 12px; color: #888; }
+        .metric-item .desc { font-size: 11px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Telemetry</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="checkUfm()">Check UFM</button>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="telemetry-card">
+        <h3>Where IB telemetry comes from</h3>
+        <div class="desc">
+            For InfiniBand fabrics, port counters, BER, and rate statistics are surfaced
+            through two complementary paths in LLDPq-IB:
+        </div>
+        <div class="metric-section">
+            <div class="metric-item">
+                <div class="name" style="color:#76b900;">Local collection (always on)</div>
+                <div class="desc">
+                    <code>ib-monitor.sh</code> polls each switch via SSH every 10 minutes,
+                    collecting <code>show interfaces ib</code> counters and
+                    <code>ib perfquery</code> / <code>ibqueryerrors</code> output. These feed
+                    the Link Errors and Optical pages.
+                </div>
+            </div>
+            <div class="metric-item">
+                <div class="name" style="color:#4fc3f7;">UFM Telemetry (optional)</div>
+                <div class="desc">
+                    NVIDIA UFM exposes historical port counters, BER trends, and alarm
+                    events via REST. When UFM is configured, the
+                    <a href="ufm-status.html" target="_self" style="color:#76b900;">UFM</a>
+                    page surfaces alerts and topology cross-checks.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="telemetry-card" id="ufm-state-card">
+        <h3>UFM Status</h3>
+        <div id="ufm-state-body"><div class="loading">Checking UFM availability...</div></div>
+    </div>
+
+    <div class="telemetry-card">
+        <h3>What is collected by the local monitor</h3>
+        <div class="metric-section">
+            <div class="metric-item">
+                <div class="name">LinkDownedCounter</div>
+                <div class="desc">Port link flap detection (LLDPq-IB Link Errors page)</div>
+            </div>
+            <div class="metric-item">
+                <div class="name">SymbolErrorCounter</div>
+                <div class="desc">Physical layer error indicator (Link Errors page)</div>
+            </div>
+            <div class="metric-item">
+                <div class="name">PortRcvErrors, PortXmitDiscards</div>
+                <div class="desc">L2 forwarding error counters (Link Errors page)</div>
+            </div>
+            <div class="metric-item">
+                <div class="name">Optical RX/TX power</div>
+                <div class="desc">Cable diagnostics via <code>show interfaces ib transceiver diagnostics</code> (Optical page)</div>
+            </div>
+            <div class="metric-item">
+                <div class="name">FW version (mlxlink)</div>
+                <div class="desc">Transceiver inventory + firmware audit (Transceiver page)</div>
+            </div>
+            <div class="metric-item">
+                <div class="name">Power / Fan / Temperature</div>
+                <div class="desc">Switch hardware sensors (Hardware page)</div>
+            </div>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', checkUfm);
+
+async function checkUfm() {
+    document.getElementById('last-updated').textContent =
+        'Checked: ' + new Date().toLocaleString('sv-SE').replace('T', ' ');
+    try {
+        const r = await fetch('/ufm-api.sh?action=status', {cache: 'no-store'});
+        const data = await r.json();
+        const body = document.getElementById('ufm-state-body');
+        const banner = document.getElementById('banner');
+
+        if (!data.configured) {
+            body.innerHTML = `
+                <div style="color:#888;">UFM is not configured.</div>
+                <p style="margin-top: 8px; color:#aaa; font-size: 12px;">
+                    Set <code>UFM_URL</code> and <code>UFM_TOKEN</code> environment variables when starting the container, e.g.:
+                </p>
+                <pre style="background:#111;padding:10px;border-radius:4px;font-size:11px;color:#bbb;overflow-x:auto;">docker run -d --name lldpq-ib \\
+  -e UFM_URL=https://ufm.example.com/ufmRest \\
+  -e UFM_TOKEN=$(echo -n 'admin:ufmpassword' | base64) \\
+  ...</pre>`;
+            banner.innerHTML = '<div class="alert-box alert-info">Telemetry from UFM is unavailable. Local monitor data is still collected (see sections below).</div>';
+        } else if (!data.reachable) {
+            body.innerHTML = `<div style="color:#f44336;">UFM at <span class="mono">${data.url}</span> is unreachable. ${data.error || ''}</div>`;
+            banner.innerHTML = '<div class="alert-box alert-danger">UFM not reachable. Verify URL, token, and network connectivity.</div>';
+        } else {
+            body.innerHTML = `
+                <div style="color:#4caf50;">UFM connected. Version: <span class="badge badge-blue">${data.version || 'unknown'}</span></div>
+                <p style="margin-top: 8px;">
+                    <a href="ufm-status.html" target="_self" class="btn btn-secondary" style="display:inline-flex;">Open UFM page</a>
+                </p>`;
+            banner.innerHTML = '';
+        }
+    } catch (e) {
+        document.getElementById('ufm-state-body').innerHTML =
+            `<div style="color:#f44336;">Error: ${e.message}</div>`;
+    }
+}
+</script>
+</body>
+</html>

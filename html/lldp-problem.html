@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Discovery Problems</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Discovery Problems</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-warning"><div class="card-value" id="unreachable-count">-</div><div class="card-label">Unreachable Devices</div></div>
+        <div class="summary-card card-danger"><div class="card-value" id="critical-links">-</div><div class="card-label">Critical Links</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="warning-links">-</div><div class="card-label">Warning Links</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="orphan-nodes">-</div><div class="card-label">Orphan Nodes</div></div>
+    </div>
+
+    <h3 style="margin-bottom: 12px; color: #76b900;">Unreachable Devices</h3>
+    <div class="table-container" style="margin-bottom: 25px;">
+        <table class="data-table">
+            <thead><tr><th>Hostname</th><th>IP</th><th>Role</th></tr></thead>
+            <tbody id="unreachable-table">
+                <tr><td colspan="3"><div class="loading"><div class="spinner"></div>Loading...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h3 style="margin-bottom: 12px; color: #ff9800;">Problem Links (LinkDowned / Errors)</h3>
+    <div class="table-container" style="margin-bottom: 25px;">
+        <table class="data-table">
+            <thead><tr><th>Device</th><th>Port</th><th>Severity</th><th>LinkDowned (Δ)</th><th>Symbol Errors (Δ)</th><th>Flaps 1h</th></tr></thead>
+            <tbody id="links-table"><tr><td colspan="6"><div class="loading">Loading...</div></td></tr></tbody>
+        </table>
+    </div>
+
+    <h3 style="margin-bottom: 12px; color: #4fc3f7;">Orphan Nodes (no links discovered)</h3>
+    <div class="table-container">
+        <table class="data-table">
+            <thead><tr><th>Type</th><th>Description</th><th>GUID</th></tr></thead>
+            <tbody id="orphans-table"><tr><td colspan="3"><div class="loading">Loading...</div></td></tr></tbody>
+        </table>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', loadAll);
+
+async function loadAll() {
+    const [topoR, linksR, devR, iniR] = await Promise.all([
+        fetch('/monitor-results/ib_topology.json', {cache:'no-store'}).catch(() => null),
+        fetch('/monitor-results/ib_link_errors.json', {cache:'no-store'}).catch(() => null),
+        fetch('/ib-api.sh?action=list-devices').catch(() => null),
+        fetch('/assets.ini', {cache:'no-store'}).catch(() => null),
+    ]);
+
+    // 1. Unreachable devices: devices in devices.yaml but missing from assets.ini
+    const reachable = new Set();
+    if (iniR && iniR.ok) {
+        const text = await iniR.text();
+        for (const line of text.split('\n')) {
+            if (!line || line.startsWith('#')) continue;
+            const parts = line.split('\t');
+            if (parts.length >= 1) reachable.add(parts[0]);
+        }
+    }
+    let devicesFlat = [];
+    try {
+        const d = await devR.json();
+        if (d && d.success) devicesFlat = d.devices_flat || [];
+    } catch (e) {}
+    const unreachable = devicesFlat.filter(d => !reachable.has(d.hostname));
+
+    // 2. Problem links from ib_link_errors.json
+    let problems = [];
+    try {
+        const lr = await linksR.json();
+        problems = lr.problem_ports || [];
+    } catch (e) {}
+
+    // 3. Orphan nodes: nodes with no links
+    let orphans = [];
+    try {
+        const topo = await topoR.json();
+        document.getElementById('last-updated').textContent = topo.last_update
+            ? 'Last Updated: ' + new Date(topo.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        const linkedGuids = new Set();
+        for (const l of (topo.links || [])) {
+            linkedGuids.add(l.source_guid); linkedGuids.add(l.target_guid);
+        }
+        orphans = (topo.nodes || []).filter(n => !linkedGuids.has(n.guid));
+    } catch (e) {}
+
+    // Summary
+    document.getElementById('unreachable-count').textContent = unreachable.length;
+    document.getElementById('critical-links').textContent = problems.filter(p => p.severity === 'critical').length;
+    document.getElementById('warning-links').textContent = problems.filter(p => p.severity === 'warning').length;
+    document.getElementById('orphan-nodes').textContent = orphans.length;
+
+    if (unreachable.length === 0 && problems.length === 0 && orphans.length === 0) {
+        document.getElementById('banner').innerHTML =
+            '<div class="alert-box alert-info"><strong>No discovery problems detected.</strong> All devices reachable, all links healthy, all nodes connected.</div>';
+    }
+
+    // Render tables
+    document.getElementById('unreachable-table').innerHTML = unreachable.length === 0
+        ? '<tr><td colspan="3"><div style="color:#888;padding:20px;">None</div></td></tr>'
+        : unreachable.map(d => `<tr><td>${d.hostname}</td><td class="mono">${d.ip}</td><td><span class="badge badge-gray">${d.role}</span></td></tr>`).join('');
+
+    document.getElementById('links-table').innerHTML = problems.length === 0
+        ? '<tr><td colspan="6"><div style="color:#888;padding:20px;">None</div></td></tr>'
+        : problems.map(p => {
+            const sevBadge = p.severity === 'critical'
+                ? '<span class="badge badge-red">CRITICAL</span>'
+                : '<span class="badge badge-yellow">WARNING</span>';
+            const d = p.delta || {};
+            return `<tr><td>${p.device}</td><td class="mono">${p.port}</td><td>${sevBadge}</td><td style="text-align:right;">${d.LinkDownedCounter || 0}</td><td style="text-align:right;">${d.SymbolErrorCounter || 0}</td><td>${p.flaps_1h || 0}</td></tr>`;
+        }).join('');
+
+    document.getElementById('orphans-table').innerHTML = orphans.length === 0
+        ? '<tr><td colspan="3"><div style="color:#888;padding:20px;">None</div></td></tr>'
+        : orphans.map(n => `<tr><td><span class="badge badge-gray">${n.type || '-'}</span></td><td>${n.description || '-'}</td><td class="mono">${n.guid}</td></tr>`).join('');
+}
+</script>
+</body>
+</html>

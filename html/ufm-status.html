@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: UFM</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .ufm-section { background: #252526; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+        .ufm-section h3 { color: #76b900; font-size: 14px; margin-bottom: 12px; }
+        .kv-grid { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; font-size: 13px; }
+        .kv-grid .k { color: #888; }
+        .kv-grid .v { color: #d4d4d4; }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        .status-dot.green { background: #4caf50; }
+        .status-dot.red   { background: #f44336; }
+        .status-dot.gray  { background: #666; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">UFM Integration</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="loadAll()">Refresh</button>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-success"><div class="card-value" id="ufm-state">-</div><div class="card-label">UFM Status</div></div>
+        <div class="summary-card card-danger"><div class="card-value" id="critical-alerts">-</div><div class="card-label">Critical Alerts</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="warning-alerts">-</div><div class="card-label">Warning Alerts</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="info-alerts">-</div><div class="card-label">Info Alerts</div></div>
+    </div>
+
+    <div class="ufm-section">
+        <h3>Connection</h3>
+        <div class="kv-grid" id="conn-grid">
+            <div class="k">Status</div><div class="v"><span class="status-dot gray"></span>Checking...</div>
+        </div>
+    </div>
+
+    <div class="ufm-section">
+        <h3>Topology Validation</h3>
+        <div id="topo-content"><div class="loading">Loading topology cross-check...</div></div>
+    </div>
+
+    <div class="ufm-section">
+        <h3>Active Alerts</h3>
+        <div class="filter-bar" style="margin-bottom: 10px;">
+            <div class="filter-group">
+                <label>Severity</label>
+                <select id="filter-sev" onchange="renderAlerts()">
+                    <option value="">All</option>
+                    <option value="critical">Critical</option>
+                    <option value="warning">Warning</option>
+                    <option value="info">Info</option>
+                </select>
+            </div>
+            <div class="filter-group" style="flex: 1;">
+                <label>Search</label>
+                <input type="text" id="filter-search" placeholder="Description / source..." oninput="renderAlerts()" autocomplete="off">
+            </div>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Severity</th>
+                        <th>Time</th>
+                        <th>Source</th>
+                        <th>Category</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody id="alerts-table">
+                    <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading alerts...</div></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+let allAlerts = [];
+
+document.addEventListener('DOMContentLoaded', loadAll);
+
+async function loadAll() {
+    document.getElementById('last-updated').textContent =
+        'Refreshed: ' + new Date().toLocaleString('sv-SE').replace('T', ' ');
+    await Promise.all([loadStatus(), loadAlerts(), loadTopologyCheck()]);
+}
+
+async function loadStatus() {
+    try {
+        const r = await fetch('/ufm-api.sh?action=status', {cache: 'no-store'});
+        const data = await r.json();
+        const grid = document.getElementById('conn-grid');
+        const banner = document.getElementById('banner');
+        const stateEl = document.getElementById('ufm-state');
+
+        if (!data.configured) {
+            grid.innerHTML = `
+                <div class="k">Status</div><div class="v"><span class="status-dot gray"></span>Not configured</div>
+                <div class="k">Reason</div><div class="v">${data.reason || 'UFM_URL not set in /etc/lldpq.conf'}</div>`;
+            stateEl.textContent = 'OFF';
+            stateEl.style.color = '#888';
+            banner.innerHTML = '<div class="alert-box alert-info"><strong>UFM is optional.</strong> To enable, set <code>UFM_URL</code> and <code>UFM_TOKEN</code> environment variables when running the container (e.g. <code>-e UFM_URL=https://ufm.example.com/ufmRest -e UFM_TOKEN=&lt;base64-token&gt;</code>). UFM provides alert validation, BER history, and topology cross-check.</div>';
+            return false;
+        }
+        if (!data.reachable) {
+            grid.innerHTML = `
+                <div class="k">Status</div><div class="v"><span class="status-dot red"></span>Unreachable</div>
+                <div class="k">URL</div><div class="v mono">${data.url}</div>
+                <div class="k">Error</div><div class="v">${data.error || 'Connection failed'}</div>`;
+            stateEl.textContent = 'DOWN';
+            stateEl.style.color = '#f44336';
+            banner.innerHTML = `<div class="alert-box alert-danger"><strong>UFM unreachable.</strong> Check UFM_URL, UFM_TOKEN, and network connectivity.</div>`;
+            return false;
+        }
+        grid.innerHTML = `
+            <div class="k">Status</div><div class="v"><span class="status-dot green"></span>Connected</div>
+            <div class="k">URL</div><div class="v mono">${data.url}</div>
+            <div class="k">UFM Version</div><div class="v"><span class="badge badge-blue">${data.version || 'unknown'}</span></div>`;
+        stateEl.textContent = 'OK';
+        stateEl.style.color = '#4caf50';
+        banner.innerHTML = '';
+        return true;
+    } catch (e) {
+        document.getElementById('conn-grid').innerHTML =
+            `<div class="k">Error</div><div class="v" style="color:#f44336;">${e.message}</div>`;
+    }
+    return false;
+}
+
+async function loadAlerts() {
+    try {
+        const r = await fetch('/ufm-api.sh?action=alerts', {cache: 'no-store'});
+        const data = await r.json();
+        if (!data.success) {
+            document.getElementById('alerts-table').innerHTML =
+                `<tr><td colspan="5"><div class="no-data"><h3>${data.error || 'Failed to load alerts'}</h3></div></td></tr>`;
+            ['critical-alerts','warning-alerts','info-alerts'].forEach(id => { document.getElementById(id).textContent = '-'; });
+            return;
+        }
+        allAlerts = data.alerts || [];
+        const s = data.summary || {};
+        document.getElementById('critical-alerts').textContent = s.critical || 0;
+        document.getElementById('warning-alerts').textContent = s.warning || 0;
+        document.getElementById('info-alerts').textContent = s.info || 0;
+        renderAlerts();
+    } catch (e) {
+        document.getElementById('alerts-table').innerHTML =
+            `<tr><td colspan="5"><div class="no-data"><h3>Error: ${e.message}</h3></div></td></tr>`;
+    }
+}
+
+function renderAlerts() {
+    const sev = document.getElementById('filter-sev').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+    let filtered = allAlerts;
+    if (sev) filtered = filtered.filter(a => a.severity === sev);
+    if (search) filtered = filtered.filter(a =>
+        (a.description||'').toLowerCase().includes(search) ||
+        (a.source||'').toLowerCase().includes(search));
+
+    const tbody = document.getElementById('alerts-table');
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No active alerts</h3></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = filtered.map(a => {
+        const sevBadge = a.severity === 'critical'
+            ? '<span class="badge badge-red">CRITICAL</span>'
+            : a.severity === 'warning'
+                ? '<span class="badge badge-yellow">WARNING</span>'
+                : '<span class="badge badge-blue">INFO</span>';
+        return `<tr>
+            <td>${sevBadge}</td>
+            <td class="mono" style="font-size:11px;">${a.timestamp || '-'}</td>
+            <td>${a.source || '-'}</td>
+            <td>${a.category || '-'}</td>
+            <td>${a.description || '-'}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function loadTopologyCheck() {
+    try {
+        const r = await fetch('/ufm-api.sh?action=validate-topology', {cache: 'no-store'});
+        const data = await r.json();
+        const el = document.getElementById('topo-content');
+        if (!data.success) {
+            el.innerHTML = `<div class="alert-box alert-info">${data.error || 'Validation unavailable'}</div>`;
+            return;
+        }
+        const onlyLocal = data.only_in_local || [];
+        const onlyUfm = data.only_in_ufm || [];
+        let html = `
+            <div class="kv-grid">
+                <div class="k">Local discovery</div><div class="v">${data.local_node_count} nodes, ${data.local_link_count} links</div>
+                <div class="k">UFM view</div><div class="v">${data.ufm_node_count} nodes, ${data.ufm_link_count} links</div>
+                <div class="k">Common nodes</div><div class="v">${data.common_count}</div>
+                <div class="k">Only in local</div><div class="v">${onlyLocal.length}</div>
+                <div class="k">Only in UFM</div><div class="v">${onlyUfm.length}</div>
+            </div>`;
+        if (onlyLocal.length || onlyUfm.length) {
+            html += '<div class="alert-box alert-warning" style="margin-top: 10px;"><strong>Discrepancy detected</strong> between local discovery and UFM. Possible causes: stale UFM cache, network partition, or recent topology change.</div>';
+            if (onlyLocal.length) {
+                html += `<div style="margin-top: 10px;"><strong style="color:#ff9800;">Only in local:</strong><br><span class="mono" style="font-size:11px; color:#aaa;">${onlyLocal.join('<br>')}</span></div>`;
+            }
+            if (onlyUfm.length) {
+                html += `<div style="margin-top: 10px;"><strong style="color:#4fc3f7;">Only in UFM:</strong><br><span class="mono" style="font-size:11px; color:#aaa;">${onlyUfm.join('<br>')}</span></div>`;
+            }
+        } else if (data.local_node_count > 0) {
+            html += '<div class="alert-box alert-info" style="margin-top: 10px; background: rgba(76, 175, 80, 0.1); border-left-color: #4caf50; color: #a5d6a7;">Local discovery matches UFM exactly.</div>';
+        }
+        el.innerHTML = html;
+    } catch (e) {
+        document.getElementById('topo-content').innerHTML =
+            `<div class="alert-box alert-info">UFM topology validation skipped: ${e.message}</div>`;
+    }
+}
+</script>
+</body>
+</html>

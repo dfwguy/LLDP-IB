@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: SM Status</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Subnet Manager Status</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div id="no-master-banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-success"><div class="card-value" id="master-state">-</div><div class="card-label">Master SM</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="standby-count">-</div><div class="card-label">Standby SMs</div></div>
+        <div class="summary-card card-total"><div class="card-value" id="total-sms">-</div><div class="card-label">Total SMs</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="disagreement-count">-</div><div class="card-label">Master Disagreements</div></div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Role</th>
+                    <th>SM GUID</th>
+                    <th>LID</th>
+                    <th>Priority</th>
+                    <th>State</th>
+                </tr>
+            </thead>
+            <tbody id="sm-table">
+                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading SM status...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div id="disagreements-section" style="display:none; margin-top: 25px;">
+        <h3 style="color: #ff9800; margin-bottom: 10px;">Devices reporting a different master</h3>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Device</th>
+                        <th>Sees as Master</th>
+                        <th>Fabric Master</th>
+                    </tr>
+                </thead>
+                <tbody id="disagreements-table"></tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', loadSM);
+
+async function loadSM() {
+    try {
+        const resp = await fetch('/monitor-results/ib_sm_status.json', {cache: 'no-store'});
+        const data = await resp.json();
+        render(data);
+    } catch (e) {
+        document.getElementById('sm-table').innerHTML =
+            '<tr><td colspan="5"><div class="no-data"><h3>No SM data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+    }
+}
+
+function render(data) {
+    document.getElementById('last-updated').textContent = data.last_update
+        ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
+        : '';
+
+    const sms = data.sms || [];
+    const summary = data.summary || {};
+    const hasMaster = !!summary.has_master;
+
+    document.getElementById('master-state').textContent = hasMaster ? 'OK' : 'NONE';
+    document.getElementById('master-state').style.color = hasMaster ? '#4caf50' : '#f44336';
+    document.getElementById('standby-count').textContent = summary.standby_count || 0;
+    document.getElementById('total-sms').textContent = summary.total_sms || 0;
+    document.getElementById('disagreement-count').textContent = (data.disagreements || []).length;
+
+    if (!hasMaster) {
+        document.getElementById('no-master-banner').innerHTML =
+            '<div class="alert-box alert-danger"><strong>No master Subnet Manager detected.</strong> The fabric may not be operational. Check sminfo on each switch.</div>';
+    } else if (summary.standby_count === 0) {
+        document.getElementById('no-master-banner').innerHTML =
+            '<div class="alert-box alert-warning"><strong>No standby Subnet Manager.</strong> Single-point-of-failure: enable a standby SM on another switch.</div>';
+    }
+
+    const tbody = document.getElementById('sm-table');
+    if (sms.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No SMs reported</h3></div></td></tr>';
+    } else {
+        tbody.innerHTML = sms.map(sm => {
+            const roleBadge = sm.role === 'master'
+                ? '<span class="badge badge-green">MASTER</span>'
+                : sm.role === 'standby'
+                    ? '<span class="badge badge-blue">STANDBY</span>'
+                    : `<span class="badge badge-gray">${sm.role || sm.state_name}</span>`;
+            return `<tr>
+                <td>${roleBadge}</td>
+                <td class="guid">${sm.guid || '-'}</td>
+                <td>${sm.lid != null ? sm.lid : '-'}</td>
+                <td>${sm.priority != null ? sm.priority : '-'}</td>
+                <td>${sm.state_name || '-'}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    const disagreements = data.disagreements || [];
+    if (disagreements.length) {
+        document.getElementById('disagreements-section').style.display = 'block';
+        document.getElementById('disagreements-table').innerHTML = disagreements.map(d => `
+            <tr>
+                <td>${d.device}</td>
+                <td class="guid">${d.local_master}</td>
+                <td class="guid">${d.fabric_master}</td>
+            </tr>`).join('');
+    }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: P_Key Report</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">P_Key (Partition) Report</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-total"><div class="card-value" id="total-pkeys">-</div><div class="card-label">Total P_Keys</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="devices-polled">-</div><div class="card-label">Devices Polled</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="inconsistency-count">-</div><div class="card-label">Inconsistencies</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="ipoib-count">-</div><div class="card-label">IPoIB Enabled</div></div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>Filter</label>
+            <select id="filter-mode" onchange="renderTable()">
+                <option value="all">All P_Keys</option>
+                <option value="inconsistent">Inconsistent only</option>
+                <option value="ipoib">IPoIB only</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Search</label>
+            <input type="text" id="filter-search" placeholder="Name, P_Key, or device..." oninput="renderTable()" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>P_Key</th>
+                    <th>Name(s)</th>
+                    <th>IPoIB</th>
+                    <th>MTU</th>
+                    <th>Rate</th>
+                    <th>Devices</th>
+                    <th>Members</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="pkey-table">
+                <tr><td colspan="8"><div class="loading"><div class="spinner"></div>Loading P_Key data...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+let allPkeys = [];
+
+document.addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+    try {
+        const resp = await fetch('/monitor-results/ib_pkey.json', {cache: 'no-store'});
+        const data = await resp.json();
+        allPkeys = data.pkeys || [];
+        const summary = data.summary || {};
+        document.getElementById('last-updated').textContent = data.last_update
+            ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        document.getElementById('total-pkeys').textContent = summary.total_pkeys || 0;
+        document.getElementById('devices-polled').textContent = summary.devices_polled || 0;
+        document.getElementById('inconsistency-count').textContent = summary.inconsistencies || 0;
+        document.getElementById('ipoib-count').textContent = allPkeys.filter(p => p.ipoib_states && p.ipoib_states.includes('True')).length;
+
+        if (summary.inconsistencies > 0) {
+            document.getElementById('banner').innerHTML =
+                `<div class="alert-box alert-warning"><strong>${summary.inconsistencies} P_Key inconsistencies detected.</strong> Same P_Key configured with different MTU/Rate/IPoIB on different switches.</div>`;
+        }
+        renderTable();
+    } catch (e) {
+        document.getElementById('pkey-table').innerHTML =
+            '<tr><td colspan="8"><div class="no-data"><h3>No P_Key data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+    }
+}
+
+function renderTable() {
+    const mode = document.getElementById('filter-mode').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+
+    let filtered = allPkeys.slice();
+    if (mode === 'inconsistent') filtered = filtered.filter(p => !p.consistent);
+    if (mode === 'ipoib') filtered = filtered.filter(p => p.ipoib_states && p.ipoib_states.includes('True'));
+
+    if (search) {
+        filtered = filtered.filter(p => {
+            const hay = `${p.pkey} ${(p.names||[]).join(' ')} ${(p.devices||[]).join(' ')}`.toLowerCase();
+            return hay.includes(search);
+        });
+    }
+
+    const tbody = document.getElementById('pkey-table');
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8"><div class="no-data"><h3>No P_Keys match the filter</h3></div></td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(p => {
+        const ipoib = (p.ipoib_states || []).includes('True')
+            ? '<span class="badge badge-green">YES</span>'
+            : '<span class="badge badge-gray">NO</span>';
+        const status = p.consistent
+            ? '<span class="badge badge-green">consistent</span>'
+            : '<span class="badge badge-yellow">inconsistent</span>';
+        return `<tr>
+            <td><strong class="mono">${p.pkey}</strong></td>
+            <td>${(p.names || []).map(n => `<span class="badge badge-blue">${n}</span>`).join(' ') || '-'}</td>
+            <td>${ipoib}</td>
+            <td>${(p.mtus || []).join(', ') || '-'}</td>
+            <td>${(p.rates || []).join(', ') || '-'}</td>
+            <td>${p.device_count} <span style="color:#666;font-size:11px;">(${(p.devices||[]).slice(0,3).join(', ')}${p.devices && p.devices.length > 3 ? '...' : ''})</span></td>
+            <td>${p.max_members || 0}</td>
+            <td>${status}</td>
+        </tr>`;
+    }).join('');
+}
+</script>
+</body>
+</html>

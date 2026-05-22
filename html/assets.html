@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Assets</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Asset Inventory</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="loadAssets()">Refresh</button>
+            <button class="btn btn-primary" onclick="downloadCSV()">Download CSV</button>
+        </div>
+    </div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-total"><div class="card-value" id="total-devices">-</div><div class="card-label">Total Devices</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="reachable-count">-</div><div class="card-label">Reachable</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="unreachable-count">-</div><div class="card-label">Unreachable</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="unique-models">-</div><div class="card-label">Unique Models</div></div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>Role</label>
+            <select id="filter-role" onchange="renderTable()">
+                <option value="">All Roles</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Model</label>
+            <select id="filter-model" onchange="renderTable()">
+                <option value="">All Models</option>
+            </select>
+        </div>
+        <div class="filter-group" style="flex: 1; min-width: 200px;">
+            <label>Search</label>
+            <input type="text" id="filter-search" placeholder="Hostname, IP, serial..." oninput="renderTable()" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th class="sortable" onclick="sortBy('hostname')">Hostname<span class="sort-arrow" id="arr-hostname">▲</span></th>
+                    <th class="sortable" onclick="sortBy('ip')">IP<span class="sort-arrow" id="arr-ip"></span></th>
+                    <th class="sortable" onclick="sortBy('role')">Role<span class="sort-arrow" id="arr-role"></span></th>
+                    <th class="sortable" onclick="sortBy('model')">Model<span class="sort-arrow" id="arr-model"></span></th>
+                    <th class="sortable" onclick="sortBy('serial')">Serial<span class="sort-arrow" id="arr-serial"></span></th>
+                    <th class="sortable" onclick="sortBy('release')">MLNX-OS<span class="sort-arrow" id="arr-release"></span></th>
+                    <th class="sortable" onclick="sortBy('uptime')">Uptime<span class="sort-arrow" id="arr-uptime"></span></th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="assets-table">
+                <tr><td colspan="8"><div class="loading"><div class="spinner"></div>Loading assets...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+let allAssets = [];        // merged: hostname, ip, role, model, serial, release, uptime, reachable
+let sortField = 'hostname';
+let sortAsc = true;
+
+document.addEventListener('DOMContentLoaded', loadAssets);
+
+async function loadAssets() {
+    // Pull both assets.ini (collected by ib-assets.sh) and devices.yaml (definitive list)
+    const [iniResp, devResp] = await Promise.all([
+        fetch('/assets.ini', {cache: 'no-store'}).catch(() => null),
+        fetch('/ib-api.sh?action=list-devices').catch(() => null),
+    ]);
+
+    // Parse devices.yaml first -- this is the authoritative list (includes unreachable)
+    let devicesFlat = [];
+    try {
+        const dev = await devResp.json();
+        if (dev && dev.success) devicesFlat = dev.devices_flat || [];
+    } catch (e) {}
+
+    // Parse assets.ini -- this is the runtime data (only reachable devices)
+    const reachable = {};
+    if (iniResp && iniResp.ok) {
+        const text = await iniResp.text();
+        const lastUpdate = (text.match(/Assets - (.+)$/m) || [])[1];
+        if (lastUpdate) {
+            document.getElementById('last-updated').textContent = 'Last Updated: ' + lastUpdate;
+        }
+        for (const line of text.split('\n')) {
+            if (!line || line.startsWith('#')) continue;
+            const parts = line.split('\t');
+            if (parts.length < 7) continue;
+            const [hostname, ip, model, serial, release, os, uptime] = parts;
+            reachable[hostname] = { hostname, ip, model, serial, release, os, uptime };
+        }
+    }
+
+    // Merge: every device in devices.yaml gets a row; populate runtime data from reachable
+    allAssets = devicesFlat.map(d => {
+        const r = reachable[d.hostname] || {};
+        return {
+            hostname: d.hostname,
+            ip: d.ip,
+            role: d.role,
+            model: r.model || '-',
+            serial: r.serial || '-',
+            release: r.release || '-',
+            uptime: r.uptime || '-',
+            reachable: !!reachable[d.hostname],
+        };
+    });
+
+    // If no devices.yaml but assets.ini has data, fall back to just that
+    if (allAssets.length === 0 && Object.keys(reachable).length) {
+        allAssets = Object.values(reachable).map(r => ({ ...r, role: 'switch', reachable: true }));
+    }
+
+    updateSummary();
+    populateFilters();
+    renderTable();
+}
+
+function updateSummary() {
+    document.getElementById('total-devices').textContent = allAssets.length;
+    document.getElementById('reachable-count').textContent = allAssets.filter(a => a.reachable).length;
+    document.getElementById('unreachable-count').textContent = allAssets.filter(a => !a.reachable).length;
+    document.getElementById('unique-models').textContent = new Set(allAssets.filter(a => a.model !== '-').map(a => a.model)).size;
+}
+
+function populateFilters() {
+    const roles = [...new Set(allAssets.map(a => a.role).filter(Boolean))].sort();
+    const models = [...new Set(allAssets.map(a => a.model).filter(m => m && m !== '-'))].sort();
+    document.getElementById('filter-role').innerHTML =
+        '<option value="">All Roles</option>' + roles.map(r => `<option value="${r}">${r}</option>`).join('');
+    document.getElementById('filter-model').innerHTML =
+        '<option value="">All Models</option>' + models.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+
+function sortBy(field) {
+    if (sortField === field) sortAsc = !sortAsc; else { sortField = field; sortAsc = true; }
+    document.querySelectorAll('.sort-arrow').forEach(el => { el.textContent = ''; el.classList.remove('active'); });
+    const arr = document.getElementById('arr-' + field);
+    if (arr) { arr.textContent = sortAsc ? '▲' : '▼'; arr.classList.add('active'); }
+    renderTable();
+}
+
+function getFiltered() {
+    const role = document.getElementById('filter-role').value;
+    const model = document.getElementById('filter-model').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+    return allAssets.filter(a => {
+        if (role && a.role !== role) return false;
+        if (model && a.model !== model) return false;
+        if (search) {
+            const hay = `${a.hostname} ${a.ip} ${a.serial} ${a.model}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+        }
+        return true;
+    });
+}
+
+function renderTable() {
+    let rows = getFiltered();
+    rows.sort((a, b) => {
+        let va = String(a[sortField] || '').toLowerCase();
+        let vb = String(b[sortField] || '').toLowerCase();
+        return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+    const tbody = document.getElementById('assets-table');
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8"><div class="no-data"><h3>No devices match filter</h3></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(a => {
+        const statusBadge = a.reachable
+            ? '<span class="badge badge-green">OK</span>'
+            : '<span class="badge badge-red">unreachable</span>';
+        return `<tr>
+            <td><strong><a href="device.html?device=${encodeURIComponent(a.hostname)}" style="color: #76b900; text-decoration: none;">${a.hostname}</a></strong></td>
+            <td class="mono">${a.ip || '-'}</td>
+            <td><span class="badge badge-blue">${a.role || '-'}</span></td>
+            <td>${a.model || '-'}</td>
+            <td class="mono">${a.serial || '-'}</td>
+            <td>${a.release || '-'}</td>
+            <td>${a.uptime || '-'}</td>
+            <td>${statusBadge}</td>
+        </tr>`;
+    }).join('');
+}
+
+function downloadCSV() {
+    const rows = getFiltered();
+    const headers = ['Hostname', 'IP', 'Role', 'Model', 'Serial', 'MLNX-OS', 'Uptime', 'Status'];
+    const lines = [headers.join(',')];
+    for (const a of rows) {
+        const fields = [a.hostname, a.ip, a.role, a.model, a.serial, a.release, a.uptime, a.reachable ? 'OK' : 'unreachable'];
+        lines.push(fields.map(v => `"${(v || '').replace(/"/g, '""')}"`).join(','));
+    }
+    const blob = new Blob([lines.join('\n')], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ib_assets.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

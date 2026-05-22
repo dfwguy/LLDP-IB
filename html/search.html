@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Search</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .search-box { display: flex; gap: 10px; align-items: center; margin-bottom: 25px; }
+        .search-box input { flex: 1; padding: 12px 16px; background: #2d2d2d; border: 1px solid #404040; color: #fff; border-radius: 6px; font-size: 16px; font-family: 'Cascadia Code', Consolas, monospace; }
+        .search-box input:focus { border-color: #76b900; outline: none; }
+        .search-hint { color: #888; font-size: 12px; margin-bottom: 15px; }
+        .result-section { background: #252526; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+        .result-section h3 { color: #76b900; font-size: 14px; margin-bottom: 12px; }
+        .kv-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; align-items: center; font-size: 13px; }
+        .kv-grid .k { color: #888; }
+        .kv-grid .v { color: #d4d4d4; }
+        .link-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+        .link-row { padding: 8px 10px; background: #1a1a1a; border-radius: 4px; display: flex; gap: 12px; align-items: center; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Search</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div class="search-hint">Search by <strong>GUID</strong> (0x... or last hex segment), <strong>LID</strong> (decimal), or <strong>description</strong> (hostname / port label).</div>
+
+    <div class="search-box">
+        <input type="text" id="q" placeholder="e.g. 0x0002c90300abc100, 1, qm-spine01" oninput="performSearch()" autocomplete="off">
+    </div>
+
+    <div id="results">
+        <div class="no-data"><h3>Type to search</h3><p>Searches the IB topology JSON. Results show matching nodes and all their links.</p></div>
+    </div>
+
+<script>
+let topo = null;
+
+document.addEventListener('DOMContentLoaded', loadTopology);
+
+async function loadTopology() {
+    try {
+        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
+        topo = await resp.json();
+        document.getElementById('last-updated').textContent = topo.last_update
+            ? 'Topology data from: ' + new Date(topo.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+    } catch (e) {
+        document.getElementById('results').innerHTML =
+            '<div class="no-data"><h3>Topology not loaded</h3><p>Run the IB monitor first.</p></div>';
+    }
+}
+
+function performSearch() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    if (!q) {
+        document.getElementById('results').innerHTML =
+            '<div class="no-data"><h3>Type to search</h3></div>';
+        return;
+    }
+    if (!topo) return;
+
+    // Match nodes by GUID prefix, LID, or description substring
+    const matches = (topo.nodes || []).filter(n => {
+        if ((n.guid || '').toLowerCase().includes(q)) return true;
+        if (String(n.lid || '') === q) return true;
+        if ((n.description || '').toLowerCase().includes(q)) return true;
+        return false;
+    });
+
+    const results = document.getElementById('results');
+    if (matches.length === 0) {
+        results.innerHTML = '<div class="no-data"><h3>No matches</h3><p>Try a different GUID, LID, or hostname.</p></div>';
+        return;
+    }
+
+    results.innerHTML = matches.map(node => renderNode(node)).join('');
+}
+
+function renderNode(node) {
+    const links = (topo.links || []).filter(l =>
+        l.source_guid === node.guid || l.target_guid === node.guid);
+
+    const linksHtml = links.length === 0
+        ? '<div style="color:#888;font-size:12px;">No links recorded</div>'
+        : `<div class="link-list">${links.map(l => renderLink(l, node.guid)).join('')}</div>`;
+
+    const typeBadge = node.type === 'switch'
+        ? '<span class="badge badge-green">SWITCH</span>'
+        : node.type === 'hca'
+            ? '<span class="badge badge-blue">HCA</span>'
+            : `<span class="badge badge-gray">${(node.type||'').toUpperCase()}</span>`;
+
+    return `
+        <div class="result-section">
+            <h3>${node.description || '(no description)'} ${typeBadge}</h3>
+            <div class="kv-grid">
+                <div class="k">GUID</div><div class="v mono">${node.guid}</div>
+                <div class="k">LID</div><div class="v">${node.lid != null ? node.lid : '-'}</div>
+                <div class="k">Type</div><div class="v">${node.type || '-'}</div>
+                <div class="k">Links</div><div class="v">${links.length}</div>
+            </div>
+            <h3 style="margin-top: 16px;">Connections (${links.length})</h3>
+            ${linksHtml}
+        </div>`;
+}
+
+function renderLink(link, ownGuid) {
+    // Determine which side is "remote" from our point of view
+    const isLocalSource = link.source_guid === ownGuid;
+    const localPort = isLocalSource ? link.source_port : link.target_port;
+    const remoteGuid = isLocalSource ? link.target_guid : link.source_guid;
+    const remotePort = isLocalSource ? link.target_port : link.source_port;
+    const remoteDesc = isLocalSource ? link.target_desc : link.source_desc;
+    const remoteType = isLocalSource ? link.target_type : link.source_type;
+
+    const remoteBadge = remoteType === 'switch'
+        ? '<span class="badge badge-green">switch</span>'
+        : remoteType === 'hca'
+            ? '<span class="badge badge-blue">hca</span>'
+            : `<span class="badge badge-gray">${remoteType || ''}</span>`;
+
+    return `
+        <div class="link-row">
+            <span class="mono badge badge-purple">port ${localPort}</span>
+            <span style="color:#666">→</span>
+            ${remoteBadge}
+            <span><strong>${remoteDesc || '(unnamed)'}</strong></span>
+            <span class="mono" style="color:#888;">port ${remotePort}</span>
+            <span class="mono" style="color:#666; font-size:11px; margin-left:auto;">${remoteGuid}</span>
+            <span class="badge badge-yellow">${link.speed || '?'}</span>
+        </div>`;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,208 @@
+===IB_IDENTITY_START===
+Product name      : MLNX-OS
+Product release   : 3.11.2400
+Build ID          : #1-dev
+Build date        : 2025-08-15 12:00:00
+Target arch       : x86_64
+Host ID           : qm-leaf01
+System serial num : MT2342X10002
+System UUID       : 66666666-7777-8888-9999-aaaaaaaaaaaa
+Uptime            : 7 days, 18 hours, 22 minutes
+---SEP---
+MODULE-TYPE              MODULE-COMPONENT     SERIAL-NUM    PART-NUMBER       CHASSIS  REVISION
+-----------------------  -------------------  ------------  ----------------  -------  --------
+CHASSIS                  -                    MT2342X10002  920-9N42F-00FN-0R0      -    A4
+MGMT                     1                    MT2342X10002  MQM8700-HS2F      -        A4
+===IB_IDENTITY_END===
+===IB_INTERFACES_START===
+Interface    Description      IB Subnet             Speed   Current line rate   Logical port state   Physical port state
+---------    -----------      ---------             -----   -----------------   ------------------   -------------------
+   IB1/1                       infiniband-default   hdr     200.0 Gbps          Active               LinkUp
+   IB1/2                       infiniband-default   hdr     200.0 Gbps          Active               LinkUp
+   IB1/3                       infiniband-default   hdr     200.0 Gbps          Active               LinkUp
+===IB_INTERFACES_END===
+===IB_LINK_DIAG_START===
+----------------------------------------------------------------------
+Interface          Code          Status
+----------------------------------------------------------------------
+IB1/1              0             The port is Active.
+IB1/2              0             The port is Active.
+IB1/3              0             The port is Active.
+===IB_LINK_DIAG_END===
+===IB_COUNTERS_START===
+IB1/1 state:
+        Logical port state        :     Active
+        Physical port state       :     LinkUp
+        Current line rate         :     200.0 Gbps
+        Speed                     :     hdr
+        Width                     : 4X
+        MTU                       : 4096
+        IB Subnet                 : infiniband-default
+Rx:
+        Bytes                     : 54321098
+        Packets                   : 543210
+        Errors                    : 0
+        Symbol errors             : 0
+        VL15 dropped packets      : 0
+Tx:
+        Bytes                     : 67890123
+        Packets                   : 678901
+        Wait                      : 0
+        Discarded packets         : 0
+===IB_COUNTERS_END===
+===IB_TRANSCEIVER_START===
+Slot 1 port 1 state
+        identifier             : QSFP56
+        cable/module type      : Optical Module (separated)
+        infiniband speeds      : EDR, HDR
+        vendor                 : NVIDIA
+        cable length           : 0m
+        part number            : MMA1T00-HS
+        revision               : A1
+        serial number          : MT2102NS00111
+
+Slot 1 port 2 state
+        identifier             : QSFP56
+        cable/module type      : Optical Module (separated)
+        infiniband speeds      : EDR, HDR
+        vendor                 : NVIDIA
+        cable length           : 0m
+        part number            : MMA1T00-HS
+        revision               : A1
+        serial number          : MT2102NS00112
+
+Slot 1 port 3 state
+        identifier             : QSFP+
+        cable/module type      : Passive copper, unequalized
+        infiniband speeds      : SDR , DDR , QDR , FDR, HDR
+        vendor                 : Mellanox
+        cable length           : 2m
+        part number            : MC2207130-0A1
+        revision               : A3
+        serial number          : MT1324VS02216
+===IB_TRANSCEIVER_END===
+===IB_CABLE_DIAG_START===
+Slot 1 port 1 state
+        identifier             : QSFP56
+        vendor                 : NVIDIA
+        part number            : MMA1T00-HS
+        revision               : A1
+        serial number          : MT2102NS00111
+        firmware version       : 103.166.0
+        temperature [C]        : 38
+        rx power [dBm]         : -1.45, -1.42, -1.38, -1.41
+        tx power [dBm]         : 1.85, 1.82, 1.84, 1.86
+
+Slot 1 port 2 state
+        identifier             : QSFP56
+        vendor                 : NVIDIA
+        part number            : MMA1T00-HS
+        revision               : A1
+        serial number          : MT2102NS00112
+        firmware version       : 103.166.0
+        temperature [C]        : 39
+        rx power [dBm]         : -1.50, -1.48, -1.43, -1.45
+        tx power [dBm]         : 1.82, 1.81, 1.83, 1.85
+===IB_CABLE_DIAG_END===
+===IB_TOPOLOGY_START===
+SW   5 1 0x0002c90300def456 0x0002c90300def001 4xHDR  - CA   200 1 0x0002c903004bea11 ( 'qm-leaf01 IB1' - 'host01 mlx5_0' )
+SW   5 2 0x0002c90300def456 0x0002c90300def002 4xHDR  - CA   201 1 0x0002c903004bea12 ( 'qm-leaf01 IB1' - 'host02 mlx5_0' )
+SW   5 3 0x0002c90300def456 0x0002c90300def003 4xHDR  - SW   1 3 0x0002c90300abc100 ( 'qm-leaf01 IB1' - 'qm-spine01 IB1' )
+===IB_TOPOLOGY_END===
+===IB_LINKINFO_START===
+0x0002c90300def456 "qm-leaf01 IB1" port 1: 4xHDR -> 0x0002c903004bea11 "host01 mlx5_0" port 1 ( Active )
+0x0002c90300def456 "qm-leaf01 IB1" port 2: 4xHDR -> 0x0002c903004bea12 "host02 mlx5_0" port 1 ( Active )
+0x0002c90300def456 "qm-leaf01 IB1" port 3: 4xHDR -> 0x0002c90300abc100 "qm-spine01 IB1" port 3 ( Active )
+===IB_LINKINFO_END===
+===IB_SM_START===
+sminfo: sm lid 5 sm guid 0x0002c90300def456, activity count 12345 priority 1 state 2 SMINFO_STANDBY
+===IB_SM_END===
+===IB_PERFQUERY_START===
+GUID 0x0002c90300def456
+Performance:
+   port 1:
+      LinkDownedCounter: 0
+      SymbolErrorCounter: 0
+      LinkErrorRecoveryCounter: 0
+      PortRcvErrors: 0
+      PortXmitDiscards: 0
+      VL15Dropped: 0
+   port 2:
+      LinkDownedCounter: 0
+      SymbolErrorCounter: 2
+      LinkErrorRecoveryCounter: 0
+      PortRcvErrors: 0
+      PortXmitDiscards: 0
+      VL15Dropped: 0
+   port 3:
+      LinkDownedCounter: 0
+      SymbolErrorCounter: 8
+      LinkErrorRecoveryCounter: 0
+      PortRcvErrors: 0
+      PortXmitDiscards: 0
+      VL15Dropped: 0
+===IB_PERFQUERY_END===
+===IB_PKEY_START===
+Partition Name : management
+    PKey       : 0x7fff
+    IPoIB      : enabled
+    MTU        : 4096
+    Rate       : 200
+    Members    :
+        0x0002c903004bea11 full
+        0x0002c903004bea12 full
+
+Partition Name : storage
+    PKey       : 0x8001
+    IPoIB      : enabled
+    MTU        : 4096
+    Rate       : 200
+    Members    :
+        0x0002c903004bea11 full
+        0x0002c903004bea12 limited
+===IB_PKEY_END===
+===IB_MULTICAST_START===
+MCMemberRecord group dump:
+        MGID....................ff12:401b:ffff:0000:0000:0000:ffff:ffff
+        Mlid....................0xc000
+        Mtu.....................0x84
+        pkey....................0x7fff
+        Rate....................0x86
+        SL......................0
+        FlowLabel...............0x0
+        HopLimit................0xff
+        TClass..................0x0
+===IB_MULTICAST_END===
+===IB_QOS_START===
+Profile Name : default
+    Traffic Class: 0
+    SL2VL mapping:
+        SL 0 -> VL 0
+        SL 1 -> VL 1
+        SL 2 -> VL 2
+        SL 3 -> VL 3
+===IB_QOS_END===
+===IB_SHARP_START===
+SHARP_NOT_AVAILABLE
+===IB_SHARP_END===
+===IB_HARDWARE_START===
+--- POWER ---
+Module      Device    Status      Power      Capacity
+---------   --------  ----------  ---------  --------
+PSU1        DC        Powered     150W       650W
+PSU2        DC        Powered     145W       650W
+--- FAN ---
+Module      Status     Speed (RPM)
+---------   --------   ------------
+FAN1        OK         7800
+FAN2        OK         7900
+--- TEMPERATURE ---
+Module      Status      Current (C)  Threshold (C)
+---------   --------    -----------  -------------
+CPU         OK          42           90
+ASIC        OK          58           105
+===IB_HARDWARE_END===
+===IB_LOG_START===
+log-message-2026-05-22.log    98KB
+---SEP---
+===IB_LOG_END===

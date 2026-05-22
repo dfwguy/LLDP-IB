@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Discovery Results</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">IB Discovery Results</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <a href="/topology/main.html" target="content-iframe" class="btn btn-secondary">Open Topology Graph</a>
+        </div>
+    </div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-total"><div class="card-value" id="total-nodes">-</div><div class="card-label">Total Nodes</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="switch-count">-</div><div class="card-label">Switches</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="hca-count">-</div><div class="card-label">HCAs</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="link-count">-</div><div class="card-label">Links</div></div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>Node Type</label>
+            <select id="filter-type" onchange="renderTable()">
+                <option value="">All Types</option>
+                <option value="switch">Switches</option>
+                <option value="hca">HCAs</option>
+                <option value="router">Routers</option>
+            </select>
+        </div>
+        <div class="filter-group" style="flex: 1;">
+            <label>Search</label>
+            <input type="text" id="filter-search" placeholder="GUID / description / LID..." oninput="renderTable()" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>GUID</th>
+                    <th>LID</th>
+                    <th>Links</th>
+                </tr>
+            </thead>
+            <tbody id="nodes-table">
+                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading topology...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+let topo = null;
+
+document.addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+    try {
+        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
+        topo = await resp.json();
+        document.getElementById('last-updated').textContent = topo.last_update
+            ? 'Last Updated: ' + new Date(topo.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        const s = topo.summary || {};
+        document.getElementById('total-nodes').textContent = s.total_nodes || 0;
+        document.getElementById('switch-count').textContent = s.switches || 0;
+        document.getElementById('hca-count').textContent = s.hcas || 0;
+        document.getElementById('link-count').textContent = s.total_links || 0;
+        renderTable();
+    } catch (e) {
+        document.getElementById('nodes-table').innerHTML =
+            '<tr><td colspan="5"><div class="no-data"><h3>No topology data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+    }
+}
+
+function linkCount(guid) {
+    return (topo.links || []).filter(l => l.source_guid === guid || l.target_guid === guid).length;
+}
+
+function renderTable() {
+    const type = document.getElementById('filter-type').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+    let nodes = topo.nodes || [];
+    if (type) nodes = nodes.filter(n => n.type === type);
+    if (search) {
+        nodes = nodes.filter(n =>
+            (n.description || '').toLowerCase().includes(search) ||
+            (n.guid || '').toLowerCase().includes(search) ||
+            String(n.lid || '') === search
+        );
+    }
+    nodes = nodes.slice().sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+
+    const tbody = document.getElementById('nodes-table');
+    if (nodes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No nodes match filter</h3></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = nodes.map(n => {
+        const typeBadge = n.type === 'switch'
+            ? '<span class="badge badge-green">switch</span>'
+            : n.type === 'hca'
+                ? '<span class="badge badge-blue">hca</span>'
+                : `<span class="badge badge-gray">${n.type || '-'}</span>`;
+        return `<tr>
+            <td>${typeBadge}</td>
+            <td><strong>${n.description || '(no name)'}</strong></td>
+            <td class="mono">${n.guid}</td>
+            <td>${n.lid != null ? n.lid : '-'}</td>
+            <td>${linkCount(n.guid)}</td>
+        </tr>`;
+    }).join('');
+}
+</script>
+</body>
+</html>

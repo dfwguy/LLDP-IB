@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Multicast Groups</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Multicast Groups</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-total"><div class="card-value" id="total-groups">-</div><div class="card-label">Total Groups</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="devices-polled">-</div><div class="card-label">Devices Polled</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="unique-pkeys">-</div><div class="card-label">Unique P_Keys</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="ipv6-mcast">-</div><div class="card-label">IPv6 / IPoIB</div></div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>P_Key</label>
+            <select id="filter-pkey" onchange="renderTable()">
+                <option value="">All P_Keys</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Search MGID</label>
+            <input type="text" id="filter-search" placeholder="Search..." oninput="renderTable()" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>MLID</th>
+                    <th>MGID</th>
+                    <th>P_Key</th>
+                    <th>MTU</th>
+                    <th>Rate</th>
+                    <th>SL</th>
+                    <th>TClass</th>
+                </tr>
+            </thead>
+            <tbody id="mc-table">
+                <tr><td colspan="7"><div class="loading"><div class="spinner"></div>Loading multicast groups...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+let allGroups = [];
+
+document.addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+    try {
+        const resp = await fetch('/monitor-results/ib_multicast.json', {cache: 'no-store'});
+        const data = await resp.json();
+        allGroups = data.groups || [];
+        const s = data.summary || {};
+        document.getElementById('last-updated').textContent = data.last_update
+            ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
+            : '';
+        document.getElementById('total-groups').textContent = s.total_groups || 0;
+        document.getElementById('devices-polled').textContent = s.devices_polled || 0;
+        document.getElementById('unique-pkeys').textContent = Object.keys(s.pkey_distribution || {}).length;
+        document.getElementById('ipv6-mcast').textContent = allGroups.filter(g => (g.mgid||'').startsWith('ff12') || (g.mgid||'').startsWith('ff1')).length;
+
+        populateFilters();
+        renderTable();
+    } catch (e) {
+        document.getElementById('mc-table').innerHTML =
+            '<tr><td colspan="7"><div class="no-data"><h3>No multicast data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+    }
+}
+
+function populateFilters() {
+    const pkeys = [...new Set(allGroups.map(g => g.pkey).filter(Boolean))].sort();
+    const sel = document.getElementById('filter-pkey');
+    sel.innerHTML = '<option value="">All P_Keys</option>' + pkeys.map(p => `<option value="${p}">${p}</option>`).join('');
+}
+
+function renderTable() {
+    const pkey = document.getElementById('filter-pkey').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+
+    let filtered = allGroups;
+    if (pkey) filtered = filtered.filter(g => g.pkey === pkey);
+    if (search) filtered = filtered.filter(g => (g.mgid||'').toLowerCase().includes(search) || (g.mlid||'').toLowerCase().includes(search));
+
+    const tbody = document.getElementById('mc-table');
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7"><div class="no-data"><h3>No groups match the filter</h3></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = filtered.map(g => `
+        <tr>
+            <td><span class="badge badge-purple mono">${g.mlid || '-'}</span></td>
+            <td class="mono" style="word-break:break-all;">${g.mgid || '-'}</td>
+            <td><span class="badge badge-blue mono">${g.pkey || '-'}</span></td>
+            <td>${g.mtu || '-'}</td>
+            <td>${g.rate || '-'}</td>
+            <td>${g.sl != null ? g.sl : '-'}</td>
+            <td>${g.tclass != null ? g.tclass : '-'}</td>
+        </tr>`).join('');
+}
+</script>
+</body>
+</html>

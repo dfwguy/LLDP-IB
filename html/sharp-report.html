@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: SHARP</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">SHARP Aggregation</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-success"><div class="card-value" id="enabled-state">-</div><div class="card-label">Fabric Status</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="devices-with-sharp">-</div><div class="card-label">SHARP-Enabled Devices</div></div>
+        <div class="summary-card card-total"><div class="card-value" id="aggregation-nodes">-</div><div class="card-label">Aggregation Nodes</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="total-quota">-</div><div class="card-label">Total Quota</div></div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Aggregation Node GUID</th>
+                    <th>Tree ID</th>
+                    <th>Quota</th>
+                    <th>Reservation</th>
+                </tr>
+            </thead>
+            <tbody id="sharp-table">
+                <tr><td colspan="4"><div class="loading"><div class="spinner"></div>Loading SHARP data...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+    try {
+        const resp = await fetch('/monitor-results/ib_sharp_status.json', {cache: 'no-store'});
+        const data = await resp.json();
+        render(data);
+    } catch (e) {
+        document.getElementById('sharp-table').innerHTML =
+            '<tr><td colspan="4"><div class="no-data"><h3>No SHARP data yet</h3></div></td></tr>';
+    }
+}
+
+function render(data) {
+    document.getElementById('last-updated').textContent = data.last_update
+        ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
+        : '';
+
+    const enabled = !!data.enabled;
+    const summary = data.summary || {};
+    const nodes = data.nodes || [];
+
+    document.getElementById('enabled-state').textContent = enabled ? 'ENABLED' : 'DISABLED';
+    document.getElementById('enabled-state').style.color = enabled ? '#4caf50' : '#888';
+    document.getElementById('devices-with-sharp').textContent = summary.devices_with_sharp || 0;
+    document.getElementById('aggregation-nodes').textContent = summary.total_aggregation_nodes || 0;
+    document.getElementById('total-quota').textContent = nodes.reduce((sum, n) => sum + (parseInt(n.quota || 0) || 0), 0);
+
+    if (!enabled) {
+        document.getElementById('banner').innerHTML =
+            '<div class="alert-box alert-info"><strong>SHARP is not enabled on this fabric.</strong> SHARP (Scalable Hierarchical Aggregation and Reduction Protocol) is an NVIDIA feature for in-network reduction operations, typically used by MPI and NCCL workloads. To enable, refer to MLNX-OS documentation.</div>';
+    }
+
+    const tbody = document.getElementById('sharp-table');
+    if (nodes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4"><div class="no-data"><h3>No aggregation nodes</h3><p>Either SHARP is disabled, or no nodes are configured.</p></div></td></tr>';
+    } else {
+        tbody.innerHTML = nodes.map(n => `
+            <tr>
+                <td class="guid">${n.guid || '-'}</td>
+                <td><span class="badge badge-blue">${n.tree_id || '-'}</span></td>
+                <td>${n.quota || '-'}</td>
+                <td>${n.reservation || '-'}</td>
+            </tr>`).join('');
+    }
+}
+</script>
+</body>
+</html>

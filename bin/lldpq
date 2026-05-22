@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# LLDPq-IB Main Execution Script (Docker entrypoint cron job)
+# Runs ib-assets.sh + ib-monitor.sh + check_alerts.py in order.
+#
+# Copyright (c) 2024-2026 LLDPq Project - Licensed under MIT License
+
+source /etc/lldpq.conf 2>/dev/null || true
+LLDPQ_DIR="${LLDPQ_DIR:-/home/lldpq/lldpq}"
+
+QUIET=">/dev/null 2>&1"
+MONITOR_FLAGS=""
+for arg in "$@"; do
+    case "$arg" in
+        -) QUIET="" ;;
+        -s) MONITOR_FLAGS="$MONITOR_FLAGS -s" ;;
+    esac
+done
+
+cd "$LLDPQ_DIR"
+
+wait_until_not_running() {
+    local script_name="$1"
+    while pgrep -f "$script_name" >/dev/null; do
+        sleep 10
+    done
+}
+
+# Quick reachability + identity pass (assets.ini for the Assets page)
+wait_until_not_running "ib-assets.sh"
+eval "./ib-assets.sh $QUIET"
+
+# Full IB data collection + analysis
+wait_until_not_running "ib-monitor.sh"
+eval "./ib-monitor.sh $MONITOR_FLAGS $QUIET"
+
+# Alert checking (only if notifications.yaml + monitor-results exist)
+if [[ -d "monitor-results" ]] && [[ -f "notifications.yaml" ]]; then
+    eval "python3 ./check_alerts.py $QUIET" || echo "Alert check failed (non-critical)"
+fi
+
+exit 0
