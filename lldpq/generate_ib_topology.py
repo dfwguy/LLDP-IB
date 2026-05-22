@@ -47,13 +47,15 @@ except ImportError:
 
 DEFAULT_CONFIG = {
     "device_categories": [
-        {"pattern": r"^ib-core-|core",  "layer": 1, "icon": "router"},
-        {"pattern": r"^ib-spine-|spine","layer": 2, "icon": "switch"},
-        {"pattern": r"^ib-leaf-|leaf",  "layer": 3, "icon": "switch"},
-        {"pattern": r"^ib-host-|host|dgx|gpu", "layer": 4, "icon": "host"},
-        {"pattern": r"switch",          "layer": 3, "icon": "switch"},
+        {"pattern": r"^ib-core-|core",   "layer": 1, "icon": "router"},
+        {"pattern": r"^ib-spine-|spine", "layer": 3, "icon": "switch"},
+        {"pattern": r"^ib-leaf-|leaf",   "layer": 4, "icon": "switch"},
+        {"pattern": r"switch",           "layer": 5, "icon": "switch"},
     ],
-    "default": {"layer": 9, "icon": "host"},
+    # Unmatched hostnames (HCAs, GPU servers, etc.) fall to the default
+    # and render as purple "server" icons at the bottom of the topology --
+    # matching the LLDPq Ethernet visual style.
+    "default": {"layer": 9, "icon": "server"},
 }
 
 

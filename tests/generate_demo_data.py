@@ -636,17 +636,32 @@ def inject_unexpected_link(links, nodes):
 
 
 def make_topology_config(nodes):
-    """topology_config.yaml -- display ordering (LLDPq uses this for layout)."""
-    spines = [n["hostname"] for n in nodes if n["role"] == "spine"]
-    leaves = [n["hostname"] for n in nodes if n["role"] == "leaf"]
-    hosts  = [n["hostname"] for n in nodes if n["role"] == "host"]
+    """topology_config.yaml -- the layer/icon mapping consumed by
+    generate_ib_topology.py. We emit the SAME schema that the production
+    lldpq/topology_config.yaml uses so real deployments and the demo
+    look identical in the cytoscape view (spines top, leaves middle,
+    HCAs at the bottom rendered as purple `server` icons -- matching the
+    LLDPq Ethernet visual style)."""
     return (
-        "# Auto-generated demo topology ordering.\n"
-        "# Override with your own ordering on real deployments.\n"
-        "rows:\n"
-        f"  - {{role: spine, label: \"Spine (NDR)\", members: {spines}}}\n"
-        f"  - {{role: leaf,  label: \"Leaf  (NDR)\", members: {leaves}}}\n"
-        f"  - {{role: host,  label: \"HCA hosts\",  members: {hosts}}}\n"
+        "# Auto-generated demo topology_config.yaml.\n"
+        "# Override on real deployments to tune layer order / icons.\n"
+        "topology: minimal\n"
+        "device_categories:\n"
+        "  - pattern: \"^ib-core-|^core-\"\n"
+        "    layer: 1\n"
+        "    icon: \"router\"\n"
+        "  - pattern: \"^ib-spine-|spine\"\n"
+        "    layer: 3\n"
+        "    icon: \"switch\"\n"
+        "  - pattern: \"^ib-leaf-|leaf\"\n"
+        "    layer: 4\n"
+        "    icon: \"switch\"\n"
+        "  - pattern: \"switch\"\n"
+        "    layer: 5\n"
+        "    icon: \"switch\"\n"
+        "default:\n"
+        "  layer: 9\n"
+        "  icon: \"server\"\n"
     )
 
 

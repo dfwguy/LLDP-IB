@@ -32,32 +32,35 @@ topology: minimal  # [full] or [minimal]
 
 device_categories:
 
-  # IB core (multi-subnet routers; uncommon in single-fabric deployments)
+  # IB core / router  (multi-subnet routers; uncommon in single-fabric)
   - pattern: "^ib-core-|^core-"
     layer: 1
     icon: "router"
 
+  # Border firewall (rare in IB networks but supported)
+  - pattern: "border-fw|firewall"
+    layer: 2
+    icon: "firewall"
+
   # Spines (top of the fat-tree)
   - pattern: "^ib-spine-|spine"
-    layer: 2
+    layer: 3
     icon: "switch"
 
   # Leaves (ToR / aggregation)
   - pattern: "^ib-leaf-|leaf"
-    layer: 3
-    icon: "switch"
-
-  # Hosts (HCA endpoints)
-  - pattern: "^ib-host-|host|dgx|gpu"
     layer: 4
-    icon: "host"
+    icon: "switch"
 
   # Generic switch fallback for hostnames that don't match the above
   - pattern: "switch"
-    layer: 3
+    layer: 5
     icon: "switch"
 
-# Default category for unmatched hostnames
+# Default category for unmatched hostnames -- HCAs (ib-host-*, dgx-*, gpu-*,
+# any ConnectX-bearing server) fall here automatically and render with the
+# purple "server" icon at the bottom of the topology layout, matching
+# LLDPq Ethernet's visual style.
 default:
   layer: 9
-  icon: "host"
+  icon: "server"
