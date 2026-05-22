@@ -120,9 +120,6 @@ sudo docker load < lldpq-ib.tar.gz
 # 3. Run
 sudo docker run -d --name lldpq-ib \
   --network host --privileged \
-  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
-  -v lldpq-ib-config:/home/lldpq/lldpq \
-  -v lldpq-ib-ssh:/home/lldpq/.ssh \
   lldpq-ib:latest
 ```
 
@@ -132,6 +129,41 @@ Then open `http://<host-ip>` in your browser. Default credentials:
 - `operator` / `operator` -- read-only
 
 **Change these passwords on first login.**
+
+### Persistent storage (recommended for production)
+
+The simple command above stores everything inside the container. If you
+remove the container, your `devices.yaml`, collected data, and the SSH
+key that LLDPq-IB pushed to your switches all disappear with it.
+
+For a long-lived deployment, mount three named volumes so this state
+survives upgrades:
+
+```bash
+sudo docker run -d --name lldpq-ib \
+  --network host --privileged \
+  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
+  -v lldpq-ib-config:/home/lldpq/lldpq \
+  -v lldpq-ib-ssh:/home/lldpq/.ssh \
+  lldpq-ib:latest
+```
+
+
+| Volume            | What it holds                                               |
+| ----------------- | ----------------------------------------------------------- |
+| `lldpq-ib-data`   | All collected IB JSON (every 10-minute cron pass) + history |
+| `lldpq-ib-config` | `devices.yaml`, `topology.dot`, alert states, command files |
+| `lldpq-ib-ssh`    | The SSH key the container uses to reach your switches       |
+
+
+With the volumes in place, upgrading to a newer release is just:
+
+```bash
+sudo docker stop lldpq-ib && sudo docker rm lldpq-ib
+wget -O lldpq-ib.tar.gz https://aliaydemir.com/lldpq-ib.tar.gz
+sudo docker load < lldpq-ib.tar.gz
+# re-run with the same -v flags
+```
 
 ### Demo run (no real switches needed)
 
@@ -145,21 +177,25 @@ sudo docker run -d --name lldpq-ib \
   lldpq-ib:latest
 ```
 
-### Update to a newer release
+### Running on a custom port
+
+Port 80 is the default. To use a different port (e.g. when port 80 is
+busy on the host), set `LLDPQ_PORT`:
 
 ```bash
-sudo docker stop lldpq-ib && sudo docker rm lldpq-ib
-wget -O lldpq-ib.tar.gz https://aliaydemir.com/lldpq-ib.tar.gz
-sudo docker load < lldpq-ib.tar.gz
-sudo docker run -d --name lldpq-ib --network host --privileged \
-  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
-  -v lldpq-ib-config:/home/lldpq/lldpq \
-  -v lldpq-ib-ssh:/home/lldpq/.ssh \
+sudo docker run -d --name lldpq-ib \
+  --network host --privileged \
+  -e LLDPQ_PORT=8090 \
+  -e LLDPQ_DEMO=true \
   lldpq-ib:latest
 ```
 
-The named volumes preserve your `devices.yaml`, collected data, and
-SSH keys across upgrades.
+Then open `http://<host-ip>:8090/`. (Add the `-v` volume flags from
+the "Persistent storage" section above for production deployments.)
+
+> With `--network host` the container shares the host's network stack,
+> so Docker's standard `-p 8090:80` mapping does NOT apply -- `LLDPQ_PORT`
+> reconfigures the in-container nginx instead.
 
 Image is amd64-only.
 

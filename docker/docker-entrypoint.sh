@@ -129,6 +129,19 @@ chmod 700 /var/lib/lldpq/sessions
 chmod 775 /var/lib/lldpq/upgrade-jobs
 echo "✓ Authentication ready"
 
+# ─── nginx listen port (LLDPQ_PORT, default 80) ───
+# Lets the operator run the container on a non-default port while still using
+# --network host (where Docker's -p mapping does not apply). When unset the
+# config is left as-is (listen 80).
+LLDPQ_PORT="${LLDPQ_PORT:-80}"
+if [ "$LLDPQ_PORT" != "80" ]; then
+    if [ -f /etc/nginx/sites-available/lldpq ]; then
+        sed -i "s/^[[:space:]]*listen[[:space:]]\+80[[:space:]]\+default_server;/    listen ${LLDPQ_PORT} default_server;/" \
+            /etc/nginx/sites-available/lldpq
+        echo "  ✓ nginx listening on port ${LLDPQ_PORT} (LLDPQ_PORT override)"
+    fi
+fi
+
 # ─── Demo mode (LLDPQ_DEMO=true) ───
 # When set, copies the baked /opt/lldpq-demo baseline into the runtime
 # locations so the UI shows a populated 4-spine + 8-leaf + 16-HCA fabric
