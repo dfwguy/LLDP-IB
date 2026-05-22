@@ -108,18 +108,16 @@ To regenerate the dataset (e.g. tweak counts), edit
 
 ## Quick Start (Docker only)
 
-LLDPq-IB is **Docker-only**. There is no `install.sh`, no native install.
+LLDPq-IB ships as a pre-built Docker image. Download, load, run:
 
 ```bash
-# Option A — pull a published image (once available)
-docker pull lldpq/lldpq-ib:latest
+# 1. Download the latest image
+wget https://aliaydemir.com/lldpq-ib.tar.gz
 
-# Option B — build from source
-git clone https://github.com/aliaydemir/lldpq-ib-src.git
-cd lldpq-ib-src
-docker build -t lldpq-ib:latest .
+# 2. Load into Docker
+docker load < lldpq-ib.tar.gz
 
-# Run
+# 3. Run
 docker run -d --name lldpq-ib \
   --network host --privileged \
   -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
@@ -128,47 +126,42 @@ docker run -d --name lldpq-ib \
   lldpq-ib:latest
 ```
 
-### Publishing your own image
+Then open `http://<host-ip>` in your browser. Default credentials:
 
-If you keep a private Docker registry, the repo ships a helper script that
-tags and pushes the image with both `:VERSION` and `:latest` tags after a
-successful `docker build`:
-
-```bash
-# 1. Build once
-./docker/docker-build.sh
-
-# 2. Push to your registry
-LLDPQ_REGISTRY=registry.example.com/lldpq ./docker/docker-push.sh
-```
-
-Equivalent manual flow (no helper):
-
-```bash
-docker tag lldpq-ib:latest registry.example.com/lldpq/lldpq-ib:0.4.0
-docker tag lldpq-ib:latest registry.example.com/lldpq/lldpq-ib:latest
-docker push registry.example.com/lldpq/lldpq-ib:0.4.0
-docker push registry.example.com/lldpq/lldpq-ib:latest
-```
-
-On the deployment host:
-
-```bash
-docker pull registry.example.com/lldpq/lldpq-ib:latest
-docker run -d --name lldpq-ib --network host --privileged \
-  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
-  -v lldpq-ib-config:/home/lldpq/lldpq \
-  -v lldpq-ib-ssh:/home/lldpq/.ssh \
-  registry.example.com/lldpq/lldpq-ib:latest
-```
-
-Builds are amd64-only — the Dockerfile expects to run on an x86_64 host.
-
-Open `http://<host-ip>` in your browser. Default credentials:
 - `admin` / `admin` -- full access
 - `operator` / `operator` -- read-only
 
 **Change these passwords on first login.**
+
+### Demo run (no real switches needed)
+
+To see the UI populated with a fake 4-spine + 8-leaf + 16-HCA fabric,
+add `-e LLDPQ_DEMO=true`:
+
+```bash
+docker run -d --name lldpq-ib \
+  --network host --privileged \
+  -e LLDPQ_DEMO=true \
+  lldpq-ib:latest
+```
+
+### Update to a newer release
+
+```bash
+docker stop lldpq-ib && docker rm lldpq-ib
+wget -O lldpq-ib.tar.gz https://aliaydemir.com/lldpq-ib.tar.gz
+docker load < lldpq-ib.tar.gz
+docker run -d --name lldpq-ib --network host --privileged \
+  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
+  -v lldpq-ib-config:/home/lldpq/lldpq \
+  -v lldpq-ib-ssh:/home/lldpq/.ssh \
+  lldpq-ib:latest
+```
+
+The named volumes preserve your `devices.yaml`, collected data, and
+SSH keys across upgrades.
+
+Image is amd64-only.
 
 ## Configuration
 
@@ -261,6 +254,28 @@ docker run -d --name lldpq-ib \
   Use UFM or your IaC tool of choice for that.
 - **HCA (host) monitoring** -- only switch-side. Use `mlnx-tools` on hosts.
 - **Multi-subnet fabrics** -- single `infiniband-default` subnet assumed.
+
+## For Developers
+
+If you want to fork, modify, or rebuild the image yourself:
+
+```bash
+git clone https://github.com/aliaydemir/lldpq-ib-src.git
+cd lldpq-ib-src
+./docker/docker-build.sh          # produces ~/lldpq-ib.tar.gz (amd64-only)
+```
+
+Optional: push to your own registry instead of distributing the tarball:
+
+```bash
+LLDPQ_REGISTRY=registry.example.com/lldpq ./docker/docker-push.sh
+```
+
+End users then pull from your registry:
+
+```bash
+docker pull registry.example.com/lldpq/lldpq-ib:latest
+```
 
 ## License
 
