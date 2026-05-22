@@ -6,38 +6,79 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <style>
+        .conn-row.match    td.status { color: #4caf50; font-weight: 600; }
+        .conn-row.fail     td.status { color: #f44336; font-weight: 600; }
+        .conn-row.warn     td.status { color: #ff9800; font-weight: 600; }
+        .conn-row.unknown  td.status { color: #888;    font-weight: 600; }
+        .status-pill {
+            display: inline-block; padding: 2px 8px; border-radius: 3px;
+            font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+        }
+        .pill-pass    { background: rgba(76,175,80,0.15);  color: #81c784; }
+        .pill-fail    { background: rgba(244,67,54,0.15);  color: #ef5350; }
+        .pill-miss    { background: rgba(244,67,54,0.15);  color: #ef5350; }
+        .pill-extra   { background: rgba(255,152,0,0.15);  color: #ffb74d; }
+        .pill-nowire  { background: rgba(120,120,120,0.20); color: #aaa;   }
+        .pill-up      { background: rgba(76,175,80,0.15);  color: #81c784; }
+        .pill-down    { background: rgba(244,67,54,0.15);  color: #ef5350; }
+    </style>
 </head>
 <body>
     <div class="page-header">
         <div>
-            <div class="page-title">IB Discovery Results</div>
+            <div class="page-title">IB Network Wiring Validation</div>
             <div class="last-updated" id="last-updated"></div>
         </div>
         <div class="action-buttons">
-            <a href="/topology/main.html" target="content-iframe" class="btn btn-secondary">Open Topology Graph</a>
+            <button class="btn btn-secondary" onclick="loadData()">Refresh</button>
+            <button class="btn btn-primary"   onclick="downloadCSV()">Download CSV</button>
         </div>
     </div>
 
     <div class="summary-grid">
-        <div class="summary-card card-total"><div class="card-value" id="total-nodes">-</div><div class="card-label">Total Nodes</div></div>
-        <div class="summary-card card-success"><div class="card-value" id="switch-count">-</div><div class="card-label">Switches</div></div>
-        <div class="summary-card card-info"><div class="card-value" id="hca-count">-</div><div class="card-label">HCAs</div></div>
-        <div class="summary-card card-warning"><div class="card-value" id="link-count">-</div><div class="card-label">Links</div></div>
+        <div class="summary-card card-total">
+            <div class="card-value" id="total-ports">-</div>
+            <div class="card-label">Total Ports</div>
+        </div>
+        <div class="summary-card card-success">
+            <div class="card-value" id="pass-ports">-</div>
+            <div class="card-label">Passing</div>
+        </div>
+        <div class="summary-card card-danger">
+            <div class="card-value" id="fail-ports">-</div>
+            <div class="card-label">Failing</div>
+        </div>
+        <div class="summary-card card-warning">
+            <div class="card-value" id="extra-ports">-</div>
+            <div class="card-label">Unexpected Wiring</div>
+        </div>
+        <div class="summary-card card-info">
+            <div class="card-value" id="noinfo-ports">-</div>
+            <div class="card-label">No Discovery Data</div>
+        </div>
     </div>
 
     <div class="filter-bar">
         <div class="filter-group">
-            <label>Node Type</label>
-            <select id="filter-type" onchange="renderTable()">
-                <option value="">All Types</option>
-                <option value="switch">Switches</option>
-                <option value="hca">HCAs</option>
-                <option value="router">Routers</option>
+            <label>Local Device</label>
+            <select id="filter-device" onchange="renderTable()">
+                <option value="">All Devices</option>
             </select>
         </div>
-        <div class="filter-group" style="flex: 1;">
+        <div class="filter-group">
+            <label>Status</label>
+            <select id="filter-status" onchange="renderTable()">
+                <option value="">All</option>
+                <option value="pass">Pass</option>
+                <option value="fail">Fail (missing or miswired)</option>
+                <option value="extra">Unexpected (extra cable)</option>
+                <option value="nowire">No data</option>
+            </select>
+        </div>
+        <div class="filter-group" style="flex:1; min-width:200px;">
             <label>Search</label>
-            <input type="text" id="filter-search" placeholder="GUID / description / LID..." oninput="renderTable()" autocomplete="off">
+            <input type="text" id="filter-search" placeholder="Device / port / neighbor..." oninput="renderTable()" autocomplete="off">
         </div>
     </div>
 
@@ -45,80 +86,287 @@
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Type</th>
-                    <th>Description</th>
-                    <th>GUID</th>
-                    <th>LID</th>
-                    <th>Links</th>
+                    <th class="sortable" onclick="sortBy('local')">Local Device <span class="sort-arrow" id="arr-local">▲</span></th>
+                    <th class="sortable" onclick="sortBy('localPort')">Local Port <span class="sort-arrow" id="arr-localPort"></span></th>
+                    <th>Port State</th>
+                    <th>Expected Neighbor</th>
+                    <th>Expected Port</th>
+                    <th>Actual Neighbor</th>
+                    <th>Actual Port</th>
+                    <th class="sortable" onclick="sortBy('status')">Status <span class="sort-arrow" id="arr-status"></span></th>
+                    <th>Notes</th>
                 </tr>
             </thead>
-            <tbody id="nodes-table">
-                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading topology...</div></td></tr>
+            <tbody id="conn-table">
+                <tr><td colspan="9"><div class="loading"><div class="spinner"></div>Loading wiring data...</div></td></tr>
             </tbody>
         </table>
     </div>
 
 <script>
-let topo = null;
+let topoJson = null;        // ib_topology.json (actual, from ibnetdiscover)
+let dotEdges = [];          // expected edges parsed from topology.dot
+let allRows  = [];          // merged per-port wiring rows
+let sortField = 'local';
+let sortAsc = true;
 
 document.addEventListener('DOMContentLoaded', loadData);
 
 async function loadData() {
+    document.getElementById('last-updated').textContent = 'Loading...';
     try {
-        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
-        topo = await resp.json();
-        document.getElementById('last-updated').textContent = topo.last_update
-            ? 'Last Updated: ' + new Date(topo.last_update).toLocaleString('sv-SE').replace('T', ' ')
-            : '';
-        const s = topo.summary || {};
-        document.getElementById('total-nodes').textContent = s.total_nodes || 0;
-        document.getElementById('switch-count').textContent = s.switches || 0;
-        document.getElementById('hca-count').textContent = s.hcas || 0;
-        document.getElementById('link-count').textContent = s.total_links || 0;
+        const [topoResp, dotResp] = await Promise.all([
+            fetch('/monitor-results/ib_topology.json', { cache: 'no-store' }).catch(() => null),
+            fetch('/topology.dot', { cache: 'no-store' }).catch(() => null),
+        ]);
+
+        topoJson = topoResp && topoResp.ok ? await topoResp.json() : { nodes: [], links: [] };
+        const dotText = dotResp && dotResp.ok ? await dotResp.text() : '';
+        dotEdges = parseDot(dotText);
+
+        document.getElementById('last-updated').textContent = topoJson.generated_at
+            ? 'Last Updated: ' + topoJson.generated_at
+            : 'Last Updated: (unknown)';
+
+        buildRows();
+        populateDeviceFilter();
+        updateSummary();
         renderTable();
     } catch (e) {
-        document.getElementById('nodes-table').innerHTML =
-            '<tr><td colspan="5"><div class="no-data"><h3>No topology data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+        document.getElementById('conn-table').innerHTML =
+            `<tr><td colspan="9"><div class="no-data"><h3>Error loading data</h3><p>${e.message}</p></div></td></tr>`;
     }
 }
 
-function linkCount(guid) {
-    return (topo.links || []).filter(l => l.source_guid === guid || l.target_guid === guid).length;
+// ---------- topology.dot parser (only edges) ----------
+// Accepts forms like:
+//   "Host1":"swp1" -- "Host2":"swp2"
+//   "Host1":"swp1" -- "Host2":"swp2" [label="..."]
+function parseDot(text) {
+    const edges = [];
+    if (!text) return edges;
+    // strip /* ... */ block comments
+    text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+    const re = /"([^"]+)"\s*:\s*"([^"]+)"\s*--\s*"([^"]+)"\s*:\s*"([^"]+)"/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+        edges.push({ a: m[1], aPort: m[2], b: m[3], bPort: m[4] });
+    }
+    return edges;
+}
+
+// ---------- assemble per-port "Local -> Actual / Expected" rows ----------
+function buildRows() {
+    allRows = [];
+
+    // Build lookup: per-device per-port -> expected neighbor entry
+    // Each undirected edge produces two directional rows.
+    const expectedBy = new Map();    // key "<device>|<port>" -> {neighbor, port}
+    for (const e of dotEdges) {
+        expectedBy.set(`${e.a}|${e.aPort}`, { neighbor: e.b, port: e.bPort });
+        expectedBy.set(`${e.b}|${e.bPort}`, { neighbor: e.a, port: e.aPort });
+    }
+
+    // Build lookup: per-device per-port -> actual neighbor (from ib_topology.json)
+    // Port from parser is numeric (e.g. 5). We canonicalise both sides as "IB1/<n>"
+    // so it matches DOT entries written as "IB1/5".
+    const actualBy = new Map();
+    const links = topoJson.links || [];
+    for (const l of links) {
+        const sDev = l.source_desc || guidToDesc(l.source_guid);
+        const tDev = l.target_desc || guidToDesc(l.target_guid);
+        const sPort = portName(l.source_port);
+        const tPort = portName(l.target_port);
+        actualBy.set(`${sDev}|${sPort}`, { neighbor: tDev, port: tPort });
+        actualBy.set(`${tDev}|${tPort}`, { neighbor: sDev, port: sPort });
+    }
+
+    // Union of all (device, port) keys
+    const keys = new Set([...expectedBy.keys(), ...actualBy.keys()]);
+
+    for (const key of keys) {
+        const [device, port] = key.split('|');
+        const exp = expectedBy.get(key) || null;
+        const act = actualBy.get(key)   || null;
+
+        let status = 'nowire';
+        let statusLabel = 'NO DATA';
+        let pill = 'pill-nowire';
+        let note = '';
+        let portState = act ? 'Active' : '-';
+
+        if (exp && act) {
+            if (sameNeighbor(exp, act)) {
+                status = 'pass';
+                statusLabel = 'PASS';
+                pill = 'pill-pass';
+                note = 'Wiring matches design';
+            } else {
+                status = 'fail';
+                statusLabel = 'MISWIRED';
+                pill = 'pill-fail';
+                note = `Wired to ${act.neighbor}:${act.port} instead of ${exp.neighbor}:${exp.port}`;
+            }
+        } else if (exp && !act) {
+            status = 'fail';
+            statusLabel = 'CABLE MISSING';
+            pill = 'pill-miss';
+            portState = 'Down';
+            note = `Designed link to ${exp.neighbor}:${exp.port} not detected by ibnetdiscover`;
+        } else if (!exp && act) {
+            status = 'extra';
+            statusLabel = 'UNEXPECTED';
+            pill = 'pill-extra';
+            note = `Discovered link to ${act.neighbor}:${act.port} not in topology.dot`;
+        }
+
+        allRows.push({
+            local:       device,
+            localPort:   port,
+            portState,
+            expectedNeighbor: exp ? exp.neighbor : '-',
+            expectedPort:     exp ? exp.port     : '-',
+            actualNeighbor:   act ? act.neighbor : '-',
+            actualPort:       act ? act.port     : '-',
+            status, statusLabel, pill, note,
+        });
+    }
+}
+
+function portName(p) {
+    if (p == null || p === '') return '';
+    // numeric -> "IB1/<n>"; already-named (e.g. "IB1/5") -> keep
+    const s = String(p);
+    return /^IB\d+\//i.test(s) ? s : `IB1/${s}`;
+}
+
+function sameNeighbor(a, b) {
+    if (!a || !b) return false;
+    if (a.neighbor !== b.neighbor) return false;
+    // Port comparison tolerant to "5" vs "IB1/5"
+    return portName(a.port) === portName(b.port);
+}
+
+function guidToDesc(g) {
+    if (!g || !topoJson) return g || '?';
+    const n = (topoJson.nodes || []).find(x => x.guid === g);
+    return (n && (n.description || n.hostname)) || g;
+}
+
+// ---------- summary / filter / sort / render ----------
+function updateSummary() {
+    document.getElementById('total-ports').textContent  = allRows.length;
+    document.getElementById('pass-ports').textContent   = allRows.filter(r => r.status === 'pass').length;
+    document.getElementById('fail-ports').textContent   = allRows.filter(r => r.status === 'fail').length;
+    document.getElementById('extra-ports').textContent  = allRows.filter(r => r.status === 'extra').length;
+    document.getElementById('noinfo-ports').textContent = allRows.filter(r => r.status === 'nowire').length;
+}
+
+function populateDeviceFilter() {
+    const devices = [...new Set(allRows.map(r => r.local))].sort();
+    const sel = document.getElementById('filter-device');
+    sel.innerHTML = '<option value="">All Devices</option>'
+        + devices.map(d => `<option value="${d}">${d}</option>`).join('');
+}
+
+function sortBy(field) {
+    if (sortField === field) sortAsc = !sortAsc;
+    else { sortField = field; sortAsc = true; }
+    document.querySelectorAll('.sort-arrow').forEach(el => el.textContent = '');
+    const arr = document.getElementById('arr-' + field);
+    if (arr) arr.textContent = sortAsc ? '▲' : '▼';
+    renderTable();
+}
+
+function getFiltered() {
+    const dev = document.getElementById('filter-device').value;
+    const st  = document.getElementById('filter-status').value;
+    const search = document.getElementById('filter-search').value.trim().toLowerCase();
+    return allRows.filter(r => {
+        if (dev && r.local !== dev) return false;
+        if (st && r.status !== st) return false;
+        if (search) {
+            const hay = `${r.local} ${r.localPort} ${r.expectedNeighbor} ${r.expectedPort} ${r.actualNeighbor} ${r.actualPort}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+        }
+        return true;
+    });
 }
 
 function renderTable() {
-    const type = document.getElementById('filter-type').value;
-    const search = document.getElementById('filter-search').value.trim().toLowerCase();
-    let nodes = topo.nodes || [];
-    if (type) nodes = nodes.filter(n => n.type === type);
-    if (search) {
-        nodes = nodes.filter(n =>
-            (n.description || '').toLowerCase().includes(search) ||
-            (n.guid || '').toLowerCase().includes(search) ||
-            String(n.lid || '') === search
-        );
-    }
-    nodes = nodes.slice().sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+    let rows = getFiltered();
+    rows.sort((a, b) => {
+        const av = a[sortField] || '', bv = b[sortField] || '';
+        if (av === bv) return 0;
+        // natural sort for port numbers like IB1/2 vs IB1/10
+        if (sortField === 'localPort') {
+            const an = parseInt(String(av).replace(/[^\d]/g, ''), 10);
+            const bn = parseInt(String(bv).replace(/[^\d]/g, ''), 10);
+            return (sortAsc ? 1 : -1) * (an - bn);
+        }
+        return (sortAsc ? 1 : -1) * String(av).localeCompare(String(bv));
+    });
 
-    const tbody = document.getElementById('nodes-table');
-    if (nodes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No nodes match filter</h3></div></td></tr>';
+    const tbody = document.getElementById('conn-table');
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9"><div class="no-data"><h3>No wiring rows match the filter</h3></div></td></tr>';
         return;
     }
-    tbody.innerHTML = nodes.map(n => {
-        const typeBadge = n.type === 'switch'
-            ? '<span class="badge badge-green">switch</span>'
-            : n.type === 'hca'
-                ? '<span class="badge badge-blue">hca</span>'
-                : `<span class="badge badge-gray">${n.type || '-'}</span>`;
-        return `<tr>
-            <td>${typeBadge}</td>
-            <td><strong>${n.description || '(no name)'}</strong></td>
-            <td class="mono">${n.guid}</td>
-            <td>${n.lid != null ? n.lid : '-'}</td>
-            <td>${linkCount(n.guid)}</td>
+    tbody.innerHTML = rows.map(r => {
+        const portStateBadge = r.portState === 'Active'
+            ? '<span class="status-pill pill-up">Active</span>'
+            : r.portState === 'Down'
+                ? '<span class="status-pill pill-down">Down</span>'
+                : `<span class="status-pill pill-nowire">${r.portState}</span>`;
+        return `<tr class="conn-row ${r.status}">
+            <td><strong>${escapeHtml(r.local)}</strong></td>
+            <td class="mono">${escapeHtml(r.localPort)}</td>
+            <td>${portStateBadge}</td>
+            <td>${escapeHtml(r.expectedNeighbor)}</td>
+            <td class="mono">${escapeHtml(r.expectedPort)}</td>
+            <td>${escapeHtml(r.actualNeighbor)}</td>
+            <td class="mono">${escapeHtml(r.actualPort)}</td>
+            <td class="status"><span class="status-pill ${r.pill}">${r.statusLabel}</span></td>
+            <td style="color:#aaa; font-size:12px;">${escapeHtml(r.note)}</td>
         </tr>`;
     }).join('');
+}
+
+function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+// ---------- CSV download ----------
+function downloadCSV() {
+    const rows = getFiltered();
+    const header = [
+        'Local Device','Local Port','Port State',
+        'Expected Neighbor','Expected Port',
+        'Actual Neighbor','Actual Port',
+        'Status','Notes'
+    ];
+    const lines = [header.join(',')];
+    for (const r of rows) {
+        const cells = [
+            r.local, r.localPort, r.portState,
+            r.expectedNeighbor, r.expectedPort,
+            r.actualNeighbor, r.actualPort,
+            r.statusLabel, r.note,
+        ].map(c => {
+            const s = String(c ?? '');
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        });
+        lines.push(cells.join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lldpq-ib-wiring-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 </script>
 </body>

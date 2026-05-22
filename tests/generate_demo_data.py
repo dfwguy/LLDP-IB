@@ -562,19 +562,77 @@ def make_assets_ini(nodes):
 
 
 def make_topology_dot(nodes, links):
-    """Graphviz dot for the legacy LLDPq topology renderer."""
-    lines = ["graph fabric {", "    rankdir=TB;", "    node [shape=box, style=filled];", ""]
-    for n in nodes:
-        color = {"spine": "#76b900", "leaf": "#4fc3f7", "host": "#ce93d8"}.get(n["role"], "#888888")
-        lines.append(f'    "{n["hostname"]}" [fillcolor="{color}", fontcolor="#000"];')
-    lines.append("")
+    """Graphviz dot for the LLDPq topology renderer + wiring validator.
+
+    Demo realism: we deliberately diverge the DOT from the actual links in
+    THREE places so the IB Network Wiring Validation page surfaces:
+      - 1 MISWIRED port  (DOT says peer A, actual says peer B)
+      - 1 CABLE MISSING  (DOT has the link, actual does not)
+      - 1 UNEXPECTED     (actual has the link, DOT does not)
+    The total mismatch count is kept tiny so the page is still mostly green.
+    """
+    # Build the directed lines first, then inject 2 deliberate edits.
+    dot_lines = []
     for link in links:
-        lines.append(
+        dot_lines.append(
             f'    "{link["source_desc"]}":"IB1/{link["source_port"]}" -- '
             f'"{link["target_desc"]}":"IB1/{link["target_port"]}";'
         )
-    lines.append("}")
-    return "\n".join(lines) + "\n"
+
+    # --- 1. MISWIRED ---
+    # Take the link "ib-leaf-04:IB1/2 -- ib-spine-02:IB1/4" and pretend the
+    # design called for spine-03 instead. Actual JSON still has spine-02.
+    target_actual = '"ib-spine-02":"IB1/4" -- "ib-leaf-04":"IB1/2"'  # spine view
+    miswired      = '"ib-spine-03":"IB1/4" -- "ib-leaf-04":"IB1/2"'
+    for i, line in enumerate(dot_lines):
+        if target_actual in line:
+            dot_lines[i] = f'    {miswired};   # demo: MISWIRED (designed spine-03, wired to spine-02)'
+            break
+
+    # --- 2. CABLE MISSING ---
+    # Add a DOT-only link to ib-leaf-08:IB1/20 that the actual JSON does not
+    # have. The validator will mark it CABLE MISSING.
+    dot_lines.append(
+        '    "ib-spine-04":"IB1/20" -- "ib-leaf-08":"IB1/20";   '
+        '# demo: CABLE MISSING (planned but ibnetdiscover did not see it)'
+    )
+
+    # --- 3. UNEXPECTED ---
+    # Append a synthetic link to the JSON-side (handled in make_topology by
+    # editing `links` before this point). We do that in write_all() by
+    # mutating the list -- see the call site.
+
+    out = ["graph fabric {", "    rankdir=TB;", "    node [shape=box, style=filled];", ""]
+    for n in nodes:
+        color = {"spine": "#76b900", "leaf": "#4fc3f7", "host": "#ce93d8"}.get(n["role"], "#888888")
+        out.append(f'    "{n["hostname"]}" [fillcolor="{color}", fontcolor="#000"];')
+    out.append("")
+    out.extend(dot_lines)
+    out.append("}")
+    return "\n".join(out) + "\n"
+
+
+def inject_unexpected_link(links, nodes):
+    """Add an extra link to the actual-topology JSON that is NOT in the DOT,
+    so the validator shows one UNEXPECTED row. Connects an unused leaf port
+    pair so it doesn't clobber a real demo link."""
+    leaves = [n for n in nodes if n["role"] == "leaf"]
+    if len(leaves) < 2:
+        return
+    a, b = leaves[0], leaves[1]
+    links.append({
+        "source_guid": a["guid"],
+        "source_port": 30,
+        "source_type": "switch",
+        "source_desc": a["hostname"],
+        "target_guid": b["guid"],
+        "target_port": 30,
+        "target_type": "switch",
+        "target_desc": b["hostname"],
+        "speed":       LINK_SPEED,
+        "discovered_from": a["hostname"],
+        "_demo_unexpected": True,
+    })
 
 
 def make_topology_config(nodes):
@@ -634,6 +692,9 @@ def write_all(target_dir: Path, web_root: Path | None):
 
     nodes = make_nodes()
     links = make_links(nodes)
+    # Inject one "UNEXPECTED" link (in actual JSON but not in DOT) so the
+    # wiring validator demo shows green + yellow + red together.
+    inject_unexpected_link(links, nodes)
 
     bundles = {
         "ib_topology.json":          make_topology(nodes, links),
