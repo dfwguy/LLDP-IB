@@ -144,7 +144,12 @@ def make_links(nodes):
       = 32 uplinks; spine port 1..8, leaf port 1..4)
     - every host has exactly one link to its leaf (16 downlinks; leaf port 5..6)
 
-    Returns a list of {src, src_port, dst, dst_port, speed} dicts.
+    Returns a list of link dicts using the SAME schema that
+    process_ib_topology.py emits, so the UI (topology / lldp / search /
+    tracepath) can consume them directly:
+        source_guid, source_port, source_type, source_desc,
+        target_guid, target_port, target_type, target_desc,
+        speed, discovered_from
     """
     spines = [n for n in nodes if n["role"] == "spine"]
     leaves = [n for n in nodes if n["role"] == "leaf"]
@@ -156,30 +161,34 @@ def make_links(nodes):
     for leaf_idx, leaf in enumerate(leaves, start=1):
         for spine_idx, spine in enumerate(spines, start=1):
             links.append({
-                "src":       leaf["hostname"],
-                "src_guid":  leaf["guid"],
-                "src_port":  f"IB1/{spine_idx}",
-                "dst":       spine["hostname"],
-                "dst_guid":  spine["guid"],
-                "dst_port":  f"IB1/{leaf_idx}",
-                "speed":     LINK_SPEED,
-                "rate_gbps": LINK_RATE_GBPS,
+                "source_guid": leaf["guid"],
+                "source_port": spine_idx,                # numeric like the parser
+                "source_type": "switch",
+                "source_desc": leaf["hostname"],
+                "target_guid": spine["guid"],
+                "target_port": leaf_idx,
+                "target_type": "switch",
+                "target_desc": spine["hostname"],
+                "speed":       LINK_SPEED,
+                "discovered_from": leaf["hostname"],
             })
 
     # Downlinks (host -> leaf): 2 hosts per leaf, leaf ports IB1/5..6
     for h_idx, hca in enumerate(hcas):
         leaf_idx = h_idx // HCAS_PER_LEAF
         leaf = leaves[leaf_idx]
-        local_port = (h_idx % HCAS_PER_LEAF) + 5  # IB1/5 or IB1/6
+        local_port = (h_idx % HCAS_PER_LEAF) + 5
         links.append({
-            "src":       hca["hostname"],
-            "src_guid":  hca["guid"],
-            "src_port":  "IB1/1",
-            "dst":       leaf["hostname"],
-            "dst_guid":  leaf["guid"],
-            "dst_port":  f"IB1/{local_port}",
-            "speed":     LINK_SPEED,
-            "rate_gbps": LINK_RATE_GBPS,
+            "source_guid": hca["guid"],
+            "source_port": 1,                            # HCA port 1
+            "source_type": "hca",
+            "source_desc": hca["hostname"],
+            "target_guid": leaf["guid"],
+            "target_port": local_port,
+            "target_type": "switch",
+            "target_desc": leaf["hostname"],
+            "speed":       LINK_SPEED,
+            "discovered_from": leaf["hostname"],
         })
 
     return links
@@ -189,25 +198,27 @@ def make_links(nodes):
 
 
 def make_topology(nodes, links):
+    """Emit ib_topology.json in the SAME shape process_ib_topology.py writes:
+       nodes:  description, type, guid, lid (+ extra fields hostname/role/model
+               kept for the AI / Assets pages that look them up by hostname)
+       links:  source_guid / source_port / source_desc / target_guid /
+               target_port / target_desc / speed / discovered_from
+    """
     switches = sum(1 for n in nodes if n["type"] == "switch")
     hcas = sum(1 for n in nodes if n["type"] == "hca")
     return {
         "generated_at": now_iso(),
         "nodes": [{
-            "hostname": n["hostname"],
-            "type":     n["type"],
-            "role":     n["role"],
-            "guid":     n["guid"],
-            "lid":      n["lid"],
-            "model":    n["model"],
+            "description": n["hostname"],   # UI prefers this; we use hostname
+            "type":        n["type"],
+            "guid":        n["guid"],
+            "lid":         n["lid"],
+            # extras kept for downstream code paths that look up by hostname
+            "hostname":    n["hostname"],
+            "role":        n["role"],
+            "model":       n["model"],
         } for n in nodes],
-        "links": [{
-            "src":      l["src"],
-            "src_port": l["src_port"],
-            "dst":      l["dst"],
-            "dst_port": l["dst_port"],
-            "speed":    l["speed"],
-        } for l in links],
+        "links": links,
         "summary": {
             "total_nodes":         len(nodes),
             "total_links":         len(links),
@@ -458,14 +469,16 @@ def make_transceivers(links):
 
     seen = set()
     for link in links:
-        for end in ("src", "dst"):
-            key = (link[end], link[f"{end}_port"])
+        for end in ("source", "target"):
+            desc = link[f"{end}_desc"]
+            port = link[f"{end}_port"]
+            key = (desc, port)
             if key in seen:
                 continue
             seen.add(key)
             modules.append({
-                "device":       link[end],
-                "port":         link[f"{end}_port"],
+                "device":       desc,
+                "port":         f"IB1/{port}",
                 "vendor":       "NVIDIA",
                 "vendor_pn":    "MMA1Z00-NS400",
                 "vendor_sn":    f"NV{abs(hash(key)) % 10**9:09d}",
@@ -519,18 +532,28 @@ def make_log_summary():
 
 
 def make_assets_ini(nodes):
-    """Tab-separated assets.ini consumed by Assets / lldp-problem pages.
-
-    Schema (per LLDPq-IB):
-      hostname\tip\tmodel\tserial\tfw\treachable
+    """assets.ini in the exact format ib-assets.sh writes (tab-separated, 7
+    columns + header):
+        # LLDPq-IB Assets - <date>
+        # DEVICE-NAME    IP    MODEL    SERIAL    RELEASE    OS    UPTIME
+        hostname\tip\tmodel\tserial\trelease\tos\tuptime
+    Only reachable devices are listed (the page treats unlisted devices.yaml
+    entries as unreachable). For the demo we list every switch -- HCAs are
+    intentionally excluded because LLDPq-IB does not probe hosts.
     """
-    lines = ["# Generated by tests/generate_demo_data.py"]
-    for n in nodes:
-        if n["type"] not in ("switch", "hca"):
-            continue
-        # All switches reachable in demo, all HCAs reachable too
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f"# LLDPq-IB Assets - {ts}",
+        "# DEVICE-NAME\tIP\tMODEL\tSERIAL\tRELEASE\tOS\tUPTIME",
+    ]
+    # Switches reachable in demo. HCAs are intentionally NOT in assets.ini
+    # (they would appear in topology only). Uptime is faked deterministically
+    # to give the Assets page something interesting in the column.
+    for i, n in enumerate(n for n in nodes if n["type"] == "switch"):
+        uptime = f"{2 + i % 5}d {3 + i % 12}h"
         lines.append(
-            f"{n['hostname']}\t{n['ip']}\t{n['model']}\t{n['serial']}\t{n['fw']}\t1"
+            f"{n['hostname']}\t{n['ip']}\t{n['model']}\t{n['serial']}\t"
+            f"{n['fw']}\tMLNX-OS\t{uptime}"
         )
     return "\n".join(lines) + "\n"
 
@@ -543,7 +566,10 @@ def make_topology_dot(nodes, links):
         lines.append(f'    "{n["hostname"]}" [fillcolor="{color}", fontcolor="#000"];')
     lines.append("")
     for link in links:
-        lines.append(f'    "{link["src"]}" -- "{link["dst"]}" [label="{link["src_port"]}<->{link["dst_port"]}"];')
+        lines.append(
+            f'    "{link["source_desc"]}":"IB1/{link["source_port"]}" -- '
+            f'"{link["target_desc"]}":"IB1/{link["target_port"]}";'
+        )
     lines.append("}")
     return "\n".join(lines) + "\n"
 

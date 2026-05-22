@@ -14,6 +14,11 @@
 defaults:
   username: nvidia
 
+# LLDPq-IB only polls switches (HCAs come from `ib ibnetdiscover` output via
+# topology JSON, not from devices.yaml). The 16 ib-host-* HCAs in the demo
+# fabric are visible on the Topology page even though they are not listed
+# here -- this matches a real-world deployment.
+
 devices:
   # ----- Spines (Quantum-2 NDR) -----
   10.10.100.10: ib-spine-01 @spine
@@ -30,24 +35,6 @@ devices:
   10.10.100.25: ib-leaf-06 @leaf
   10.10.100.26: ib-leaf-07 @leaf
   10.10.100.27: ib-leaf-08 @leaf
-
-  # ----- HCAs (ConnectX-7 hosts; shown in topology, not polled) -----
-  10.10.100.100: ib-host-01 @host
-  10.10.100.101: ib-host-02 @host
-  10.10.100.102: ib-host-03 @host
-  10.10.100.103: ib-host-04 @host
-  10.10.100.104: ib-host-05 @host
-  10.10.100.105: ib-host-06 @host
-  10.10.100.106: ib-host-07 @host
-  10.10.100.107: ib-host-08 @host
-  10.10.100.108: ib-host-09 @host
-  10.10.100.109: ib-host-10 @host
-  10.10.100.110: ib-host-11 @host
-  10.10.100.111: ib-host-12 @host
-  10.10.100.112: ib-host-13 @host
-  10.10.100.113: ib-host-14 @host
-  10.10.100.114: ib-host-15 @host
-  10.10.100.115: ib-host-16 @host
 
 endpoint_hosts:
   - "ib-host-*"
