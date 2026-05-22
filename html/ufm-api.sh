@@ -15,7 +15,10 @@ ACTION="${QUERY_STRING#*action=}"
 ACTION="${ACTION%%&*}"
 
 case "$ACTION" in
-    status) ;;   # always available -- used to detect UFM presence
+    status|get-config) ;;   # readable by any logged-in user
+    save-config)
+        require_admin 2>/dev/null || true
+        ;;
     *)
         if ! ${AUTH_REQUIRE_ADMIN:-false}; then
             require_admin 2>/dev/null || true
@@ -239,6 +242,130 @@ print(json.dumps({
     'local_link_count': len(topo.get('links', [])),
 }))
 " "$SYSTEMS_RAW" "$LINKS_RAW"
+        ;;
+
+    # -------------------------------------------------------------------
+    # get-config: return current UFM settings (token masked) for the form
+    # -------------------------------------------------------------------
+    get-config)
+        python3 -c "
+import json, os
+def mask(t):
+    if not t: return ''
+    return t[:4] + '...' + t[-4:] if len(t) > 12 else '***'
+print(json.dumps({
+    'success': True,
+    'configured': bool(os.environ.get('UFM_URL', '').strip()),
+    'url':        os.environ.get('UFM_URL', ''),
+    'token_set':  bool(os.environ.get('UFM_TOKEN', '').strip()),
+    'token_mask': mask(os.environ.get('UFM_TOKEN', '')),
+    'verify_tls': os.environ.get('UFM_VERIFY_TLS', 'false').lower() == 'true',
+}))
+" 2>/dev/null
+        ;;
+
+    # -------------------------------------------------------------------
+    # save-config: write UFM_URL / UFM_TOKEN / UFM_VERIFY_TLS to lldpq.conf
+    # Body: JSON {url, username, password, token, verify_tls}
+    #   - If "token" is provided -> stored as-is.
+    #   - Else username+password -> base64("user:pass") -> stored as token.
+    #   - To clear: send {url:""} -- both URL and token wiped.
+    # /etc/lldpq.conf is chmod 664 root:www-data, so the www-data CGI
+    # process can write directly without sudo.
+    # -------------------------------------------------------------------
+    save-config)
+        # Buffer POST body
+        POST_DATA=""
+        if [ "${REQUEST_METHOD:-}" = "POST" ] && [ -n "${CONTENT_LENGTH:-}" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+            POST_DATA=$(dd bs=4096 count=$(( (CONTENT_LENGTH + 4095) / 4096 )) 2>/dev/null | head -c "$CONTENT_LENGTH")
+        fi
+        export POST_DATA
+        python3 << 'PY'
+import json, os, sys, base64, fcntl, re
+
+CONF = '/etc/lldpq.conf'
+LOCK = CONF + '.lock'
+
+def out(d):
+    print(json.dumps(d))
+    sys.exit(0)
+
+try:
+    data = json.loads(os.environ.get('POST_DATA') or '{}')
+except Exception as e:
+    out({'success': False, 'error': f'Invalid JSON: {e}'})
+
+url        = (data.get('url') or '').strip()
+token_in   = (data.get('token') or '').strip()
+username   = (data.get('username') or '').strip()
+password   = (data.get('password') or '').strip()
+verify_tls = bool(data.get('verify_tls'))
+
+# Validate URL only if user is configuring (not clearing)
+if url:
+    if not re.match(r'^https?://[^\s]+$', url):
+        out({'success': False, 'error': 'URL must start with http:// or https:// and have no spaces'})
+
+# Resolve token
+if token_in:
+    token = token_in
+elif username and password:
+    token = base64.b64encode(f'{username}:{password}'.encode()).decode()
+else:
+    # Allow URL-only updates (keep existing token) ONLY if we're not clearing
+    token = None
+
+# When user clears URL, also wipe token / verify_tls
+if not url:
+    token = ''
+
+updates = {
+    'UFM_URL':        url,
+    'UFM_VERIFY_TLS': 'true' if verify_tls else 'false',
+}
+if token is not None:
+    updates['UFM_TOKEN'] = token
+
+# Read+modify+write /etc/lldpq.conf with an exclusive lock
+try:
+    lock_fd = open(LOCK, 'w')
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        try:
+            with open(CONF) as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        seen = set()
+        new_lines = []
+        for ln in lines:
+            key = ln.split('=', 1)[0].strip() if '=' in ln else ''
+            if key in updates:
+                new_lines.append(f'{key}={updates[key]}\n')
+                seen.add(key)
+            else:
+                new_lines.append(ln)
+        for k, v in updates.items():
+            if k not in seen:
+                new_lines.append(f'{k}={v}\n')
+        with open(CONF, 'w') as f:
+            f.writelines(new_lines)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+except PermissionError as e:
+    out({'success': False, 'error': f'Cannot write {CONF}: {e}. The CGI user (www-data) must be in the conf file group.'})
+except Exception as e:
+    out({'success': False, 'error': str(e)})
+
+out({
+    'success': True,
+    'message': 'UFM settings saved. The change takes effect on the next API request.' if url else 'UFM settings cleared.',
+    'url': url,
+    'token_set': bool(token),
+    'verify_tls': verify_tls,
+})
+PY
         ;;
 
     *)

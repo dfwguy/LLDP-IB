@@ -25,11 +25,66 @@
             <div class="last-updated" id="last-updated"></div>
         </div>
         <div class="action-buttons">
+            <button class="btn btn-secondary admin-only" onclick="openUfmConfigModal()">Configure UFM</button>
             <button class="btn btn-secondary" onclick="loadAll()">Refresh</button>
         </div>
     </div>
 
     <div id="banner"></div>
+
+    <!-- UFM configuration modal -->
+    <div id="ufm-cfg-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;display:none;align-items:center;justify-content:center;" onclick="if(event.target===this)closeUfmConfigModal()">
+        <div style="background:#1e1e1e;border:1px solid #404040;border-radius:8px;width:520px;max-width:92vw;box-shadow:0 12px 50px rgba(0,0,0,0.6);">
+            <div style="padding:14px 20px;background:#252526;border-bottom:1px solid #3c3c3c;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:space-between;">
+                <span style="color:#76b900;font-weight:600;font-size:14px;">Configure UFM Integration</span>
+                <button onclick="closeUfmConfigModal()" style="background:none;border:0;color:#aaa;font-size:22px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+            </div>
+            <div style="padding:18px 22px;color:#d4d4d4;font-size:13px;">
+                <p style="color:#888;margin-bottom:14px;line-height:1.5;">
+                    LLDPq-IB connects to UFM via REST. Settings are written to
+                    <code style="color:#dcdcaa;">/etc/lldpq.conf</code> and take effect on the next API call (no container restart needed).
+                </p>
+
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">UFM REST URL</label>
+                    <input type="text" id="cfg-url" placeholder="https://ufm.example.com/ufmRest"
+                        style="width:100%;padding:8px 10px;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;font-family:monospace;font-size:13px;">
+                    <div style="color:#666;font-size:11px;margin-top:3px;">Typical: <code>https://&lt;ufm-vip&gt;/ufmRest</code></div>
+                </div>
+
+                <div style="display:flex;gap:10px;margin-bottom:12px;">
+                    <div style="flex:1;">
+                        <label style="display:block;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Username</label>
+                        <input type="text" id="cfg-user" placeholder="admin"
+                            style="width:100%;padding:8px 10px;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;font-size:13px;" autocomplete="off">
+                    </div>
+                    <div style="flex:1;">
+                        <label style="display:block;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Password</label>
+                        <input type="password" id="cfg-pass" placeholder="••••••••"
+                            style="width:100%;padding:8px 10px;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;font-size:13px;" autocomplete="off">
+                    </div>
+                </div>
+                <details style="margin-bottom:12px;">
+                    <summary style="color:#888;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:0.5px;">Or paste a base64 token directly</summary>
+                    <input type="password" id="cfg-token" placeholder="base64(user:pass)"
+                        style="width:100%;padding:8px 10px;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;font-family:monospace;font-size:12px;margin-top:6px;" autocomplete="off">
+                </details>
+
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#aaa;margin-bottom:6px;">
+                    <input type="checkbox" id="cfg-verify-tls" style="margin:0;">
+                    <span>Verify UFM TLS certificate (off by default for self-signed)</span>
+                </label>
+            </div>
+            <div style="padding:12px 20px;background:#252526;border-top:1px solid #3c3c3c;border-radius:0 0 8px 8px;display:flex;align-items:center;justify-content:space-between;">
+                <div id="cfg-status" style="color:#888;font-size:12px;"></div>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="clearUfmConfig()" style="padding:7px 14px;border:0;border-radius:4px;cursor:pointer;font-size:12px;background:#7f1d1d;color:#fca5a5;" title="Wipe UFM_URL and UFM_TOKEN from /etc/lldpq.conf">Clear</button>
+                    <button onclick="closeUfmConfigModal()" style="padding:7px 18px;border:0;border-radius:4px;cursor:pointer;font-size:13px;background:#404040;color:#fff;">Cancel</button>
+                    <button id="cfg-save" onclick="saveUfmConfig()" style="padding:7px 18px;border:0;border-radius:4px;cursor:pointer;font-size:13px;background:#76b900;color:#000;font-weight:600;">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="summary-grid">
         <div class="summary-card card-success"><div class="card-value" id="ufm-state">-</div><div class="card-label">UFM Status</div></div>
@@ -93,7 +148,105 @@ document.addEventListener('DOMContentLoaded', loadAll);
 async function loadAll() {
     document.getElementById('last-updated').textContent =
         'Refreshed: ' + new Date().toLocaleString('sv-SE').replace('T', ' ');
-    await Promise.all([loadStatus(), loadAlerts(), loadTopologyCheck()]);
+    // Always check status first; if UFM is not configured / unreachable,
+    // skip alerts + topology validation so the page doesn't render
+    // "JSON.parse" errors that come from empty responses.
+    const ok = await loadStatus();
+    if (ok) {
+        await Promise.all([loadAlerts(), loadTopologyCheck()]);
+    } else {
+        markUfmDownSections();
+    }
+}
+
+function markUfmDownSections() {
+    document.getElementById('alerts-table').innerHTML =
+        '<tr><td colspan="5"><div class="no-data"><h3>UFM not connected — alerts unavailable</h3>'
+        + '<p style="color:#888;">Use the <strong>Configure UFM</strong> button above to set the URL and credentials.</p>'
+        + '</div></td></tr>';
+    document.getElementById('topo-content').innerHTML =
+        '<div class="alert-box alert-info">Topology cross-check requires a connected UFM. '
+        + 'Configure UFM (button at the top of this page) to enable it.</div>';
+    ['critical-alerts','warning-alerts','info-alerts']
+        .forEach(id => { document.getElementById(id).textContent = '-'; });
+}
+
+// ===================== UFM Configure modal =====================
+async function openUfmConfigModal() {
+    const status = document.getElementById('cfg-status');
+    status.style.color = '#888';
+    status.textContent = '';
+    document.getElementById('cfg-url').value = '';
+    document.getElementById('cfg-user').value = '';
+    document.getElementById('cfg-pass').value = '';
+    document.getElementById('cfg-token').value = '';
+    document.getElementById('cfg-verify-tls').checked = false;
+    document.getElementById('ufm-cfg-overlay').style.display = 'flex';
+    try {
+        const r = await fetch('/ufm-api.sh?action=get-config', {cache: 'no-store'});
+        const data = await r.json();
+        if (data.success) {
+            document.getElementById('cfg-url').value = data.url || '';
+            document.getElementById('cfg-verify-tls').checked = !!data.verify_tls;
+            if (data.token_set) {
+                document.getElementById('cfg-token').setAttribute('placeholder',
+                    `current token: ${data.token_mask || 'set'} (leave blank to keep)`);
+            }
+        }
+    } catch (e) { /* form stays blank */ }
+}
+
+function closeUfmConfigModal() {
+    document.getElementById('ufm-cfg-overlay').style.display = 'none';
+}
+
+async function saveUfmConfig() {
+    const status = document.getElementById('cfg-status');
+    const btn = document.getElementById('cfg-save');
+    const body = {
+        url:        document.getElementById('cfg-url').value.trim(),
+        username:   document.getElementById('cfg-user').value.trim(),
+        password:   document.getElementById('cfg-pass').value,
+        token:      document.getElementById('cfg-token').value.trim(),
+        verify_tls: document.getElementById('cfg-verify-tls').checked,
+    };
+    if (body.url && !body.token && !(body.username && body.password)) {
+        status.style.color = '#f44336';
+        status.textContent = 'Provide either username+password OR a base64 token';
+        return;
+    }
+    btn.disabled = true;
+    status.style.color = '#888';
+    status.textContent = 'Saving...';
+    try {
+        const r = await fetch('/ufm-api.sh?action=save-config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.success === false) {
+            throw new Error(data.error || `HTTP ${r.status}`);
+        }
+        status.style.color = '#4caf50';
+        status.textContent = data.message || 'Saved.';
+        setTimeout(() => { closeUfmConfigModal(); loadAll(); }, 600);
+    } catch (e) {
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function clearUfmConfig() {
+    if (!confirm('Clear UFM settings from /etc/lldpq.conf? UFM features will go offline until reconfigured.')) return;
+    document.getElementById('cfg-url').value = '';
+    document.getElementById('cfg-user').value = '';
+    document.getElementById('cfg-pass').value = '';
+    document.getElementById('cfg-token').value = '';
+    document.getElementById('cfg-verify-tls').checked = false;
+    saveUfmConfig();
 }
 
 async function loadStatus() {
@@ -110,7 +263,7 @@ async function loadStatus() {
                 <div class="k">Reason</div><div class="v">${data.reason || 'UFM_URL not set in /etc/lldpq.conf'}</div>`;
             stateEl.textContent = 'OFF';
             stateEl.style.color = '#888';
-            banner.innerHTML = '<div class="alert-box alert-info"><strong>UFM is optional.</strong> To enable, set <code>UFM_URL</code> and <code>UFM_TOKEN</code> environment variables when running the container (e.g. <code>-e UFM_URL=https://ufm.example.com/ufmRest -e UFM_TOKEN=&lt;base64-token&gt;</code>). UFM provides alert validation, BER history, and topology cross-check.</div>';
+            banner.innerHTML = '<div class="alert-box alert-info"><strong>UFM is optional.</strong> Click <strong>Configure UFM</strong> (top-right) to enter your UFM URL + credentials, or pass <code>-e UFM_URL=… -e UFM_TOKEN=…</code> at container start. UFM provides alert validation, BER history, and topology cross-check.</div>';
             return false;
         }
         if (!data.reachable) {

@@ -23,6 +23,51 @@
         .info-panel .v { color: #ddd; word-break: break-all; }
         .info-panel .links-list { margin-top: 8px; max-height: 200px; overflow-y: auto; }
         .info-panel .links-list .row { padding: 3px 0; border-top: 1px solid #2d2d2d; font-size: 11px; }
+
+        /* ----- File editor modal ----- */
+        .file-modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 1000;
+            display: none; align-items: center; justify-content: center;
+        }
+        .file-modal-overlay.open { display: flex; }
+        .file-modal {
+            background: #1e1e1e; border: 1px solid #404040; border-radius: 8px;
+            width: 80vw; max-width: 1100px; height: 80vh; display: flex; flex-direction: column;
+            box-shadow: 0 12px 50px rgba(0,0,0,0.6);
+        }
+        .file-modal-head {
+            padding: 14px 20px; background: #252526; border-bottom: 1px solid #3c3c3c;
+            display: flex; align-items: center; justify-content: space-between;
+            border-radius: 8px 8px 0 0;
+        }
+        .file-modal-head .title { color: #76b900; font-weight: 600; font-size: 14px; }
+        .file-modal-head .path  { color: #888; font-size: 12px; font-family: monospace; margin-left: 12px; }
+        .file-modal-head .close {
+            background: none; border: 0; color: #aaa; font-size: 22px;
+            cursor: pointer; line-height: 1; padding: 0 6px;
+        }
+        .file-modal-head .close:hover { color: #fff; }
+        .file-modal-body { flex: 1; display: flex; flex-direction: column; padding: 12px 20px; gap: 8px; min-height: 0; }
+        .file-modal-body textarea {
+            flex: 1; background: #111; color: #d4d4d4; border: 1px solid #333;
+            border-radius: 4px; padding: 12px;
+            font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+            font-size: 13px; line-height: 1.5; resize: none; tab-size: 2;
+        }
+        .file-modal-body textarea:focus { outline: none; border-color: #76b900; }
+        .file-modal-foot {
+            padding: 12px 20px; background: #252526; border-top: 1px solid #3c3c3c;
+            border-radius: 0 0 8px 8px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .file-modal-foot .status { color: #888; font-size: 12px; }
+        .file-modal-foot .actions { display: flex; gap: 8px; }
+        .file-modal-foot button {
+            padding: 7px 18px; border: 0; border-radius: 4px; cursor: pointer; font-size: 13px;
+        }
+        .file-modal-foot .btn-cancel { background: #404040; color: #fff; }
+        .file-modal-foot .btn-save   { background: #76b900; color: #000; font-weight: 600; }
+        .file-modal-foot .btn-save:disabled { background: #3d5e00; color: #666; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -32,6 +77,8 @@
             <div class="last-updated" id="last-updated"></div>
         </div>
         <div class="action-buttons">
+            <button class="btn btn-secondary admin-only" onclick="openEditor('topology.dot', '/edit-topology', 'topology.dot')" title="Edit the expected wiring graph (admin only)">Edit topology.dot</button>
+            <button class="btn btn-secondary admin-only" onclick="openEditor('topology_config.yaml', '/edit-config', 'topology_config.yaml')" title="Edit the display layer config (admin only)">Edit display config</button>
             <select id="layout-select" class="btn btn-secondary" onchange="reLayout()" style="background:#2d2d2d;color:#fff;">
                 <option value="dagre">Hierarchical</option>
                 <option value="concentric">Concentric</option>
@@ -40,6 +87,29 @@
                 <option value="cose">Force-Directed</option>
             </select>
             <button class="btn btn-secondary" onclick="fitGraph()">Fit</button>
+        </div>
+    </div>
+
+    <!-- File editor modal (shared for topology.dot + topology_config.yaml) -->
+    <div class="file-modal-overlay" id="file-editor-overlay" onclick="if(event.target===this)closeEditor()">
+        <div class="file-modal">
+            <div class="file-modal-head">
+                <div>
+                    <span class="title" id="file-editor-title">Edit</span>
+                    <span class="path"   id="file-editor-path"></span>
+                </div>
+                <button class="close" onclick="closeEditor()" title="Close">&times;</button>
+            </div>
+            <div class="file-modal-body">
+                <textarea id="file-editor-textarea" spellcheck="false" placeholder="Loading..."></textarea>
+            </div>
+            <div class="file-modal-foot">
+                <div class="status" id="file-editor-status"></div>
+                <div class="actions">
+                    <button class="btn-cancel" onclick="closeEditor()">Cancel</button>
+                    <button class="btn-save"   id="file-editor-save" onclick="saveEditor()">Save</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -73,8 +143,76 @@
 <script>
 let cy = null;
 let topoData = null;
+let editorState = { endpoint: null, path: null };
 
 document.addEventListener('DOMContentLoaded', loadTopology);
+
+// ===================== File editor modal =====================
+async function openEditor(title, endpoint, path) {
+    editorState = { endpoint, path };
+    document.getElementById('file-editor-title').textContent = `Edit ${title}`;
+    document.getElementById('file-editor-path').textContent = path;
+    document.getElementById('file-editor-overlay').classList.add('open');
+    const ta = document.getElementById('file-editor-textarea');
+    const status = document.getElementById('file-editor-status');
+    const saveBtn = document.getElementById('file-editor-save');
+    ta.value = 'Loading...';
+    ta.disabled = true;
+    saveBtn.disabled = true;
+    status.textContent = '';
+    status.style.color = '#888';
+    try {
+        const r = await fetch(endpoint, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status} -- are you logged in as admin?`);
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Server refused the request');
+        ta.value = data.content || '';
+        ta.disabled = false;
+        saveBtn.disabled = false;
+        status.textContent = `Loaded ${ta.value.length} bytes`;
+    } catch (e) {
+        ta.value = '';
+        ta.disabled = true;
+        status.textContent = 'Error: ' + e.message;
+        status.style.color = '#f44336';
+    }
+}
+
+function closeEditor() {
+    document.getElementById('file-editor-overlay').classList.remove('open');
+}
+
+async function saveEditor() {
+    const ta = document.getElementById('file-editor-textarea');
+    const status = document.getElementById('file-editor-status');
+    const saveBtn = document.getElementById('file-editor-save');
+    if (!editorState.endpoint) return;
+    saveBtn.disabled = true;
+    status.style.color = '#888';
+    status.textContent = 'Saving...';
+    try {
+        const r = await fetch(editorState.endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: ta.value }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.success === false) {
+            throw new Error(data.error || `HTTP ${r.status}`);
+        }
+        status.style.color = '#4caf50';
+        status.textContent = `Saved at ${new Date().toLocaleTimeString('sv-SE')}`;
+        saveBtn.disabled = false;
+        // Reload topology after saving topology.dot so the graph updates
+        if (editorState.path === 'topology.dot' && typeof loadTopology === 'function') {
+            setTimeout(() => loadTopology(), 400);
+        }
+    } catch (e) {
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+        saveBtn.disabled = false;
+    }
+}
 
 async function loadTopology() {
     try {

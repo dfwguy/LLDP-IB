@@ -157,36 +157,39 @@ def make_links(nodes):
 
     links = []
 
-    # Uplinks (leaf -> spine)
+    # Spine -> Leaf links (source=spine on top, target=leaf below). The dagre
+    # layout in topology/main.html ranks nodes top-to-bottom along edge
+    # direction, so we orient edges so spines render at the top, leaves in
+    # the middle, hosts at the bottom.
     for leaf_idx, leaf in enumerate(leaves, start=1):
         for spine_idx, spine in enumerate(spines, start=1):
             links.append({
-                "source_guid": leaf["guid"],
-                "source_port": spine_idx,                # numeric like the parser
+                "source_guid": spine["guid"],
+                "source_port": leaf_idx,                  # spine port -> this leaf
                 "source_type": "switch",
-                "source_desc": leaf["hostname"],
-                "target_guid": spine["guid"],
-                "target_port": leaf_idx,
+                "source_desc": spine["hostname"],
+                "target_guid": leaf["guid"],
+                "target_port": spine_idx,                 # leaf port -> this spine
                 "target_type": "switch",
-                "target_desc": spine["hostname"],
+                "target_desc": leaf["hostname"],
                 "speed":       LINK_SPEED,
-                "discovered_from": leaf["hostname"],
+                "discovered_from": spine["hostname"],
             })
 
-    # Downlinks (host -> leaf): 2 hosts per leaf, leaf ports IB1/5..6
+    # Leaf -> Host links (source=leaf on top, target=host at bottom)
     for h_idx, hca in enumerate(hcas):
         leaf_idx = h_idx // HCAS_PER_LEAF
         leaf = leaves[leaf_idx]
-        local_port = (h_idx % HCAS_PER_LEAF) + 5
+        local_port = (h_idx % HCAS_PER_LEAF) + 5         # leaf IB1/5..6
         links.append({
-            "source_guid": hca["guid"],
-            "source_port": 1,                            # HCA port 1
-            "source_type": "hca",
-            "source_desc": hca["hostname"],
-            "target_guid": leaf["guid"],
-            "target_port": local_port,
-            "target_type": "switch",
-            "target_desc": leaf["hostname"],
+            "source_guid": leaf["guid"],
+            "source_port": local_port,
+            "source_type": "switch",
+            "source_desc": leaf["hostname"],
+            "target_guid": hca["guid"],
+            "target_port": 1,                             # HCA port 1
+            "target_type": "hca",
+            "target_desc": hca["hostname"],
             "speed":       LINK_SPEED,
             "discovered_from": leaf["hostname"],
         })
