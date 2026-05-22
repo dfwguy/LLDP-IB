@@ -317,4 +317,21 @@ docker pull registry.example.com/lldpq/lldpq-ib:latest
 
 ## License
 
-MIT License -- see [LICENSE](LICENSE).
+MIT License -- see [LICENSE](LICENSE).  
+
+
+```bash
+
+rm -rf lldpq-ib.tar.gz
+sudo docker stop lldpq-ib && sudo docker rm lldpq-ib
+sudo docker rmi lldpq-ib:latest
+wget -O lldpq-ib.tar.gz https://aliaydemir.com/lldpq-ib.tar.gz
+sudo docker load < lldpq-ib.tar.gz
+sudo docker run -d --name lldpq-ib \
+  --network host --privileged \
+  -e LLDPQ_PORT=8090 \
+  -e LLDPQ_DEMO=true \
+  lldpq-ib:latest
+
+```
+
