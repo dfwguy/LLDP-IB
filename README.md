@@ -27,7 +27,7 @@ Sister project of [LLDPq](https://github.com/aliaydemir/lldpq-src) (Ethernet/Cum
 - **Multicast Groups** -- IPoIB/MPI/NCCL group membership tracking
 - **QoS / Service Levels** -- SL-to-VL mapping per switch
 - **SHARP Aggregation Trees** -- NVIDIA in-network reduction visibility
-  (auto-detected, shown only if SHARP is enabled)
+(auto-detected, shown only if SHARP is enabled)
 - **Transceiver Inventory** -- per-port vendor PN/SN, firmware version (via `mlxlink`)
 - **Optical Diagnostics** -- RX/TX power, temperature per cable
 - **GUID / LID Search** -- fabric-wide search by GUID or LID
@@ -43,36 +43,36 @@ checklist, Ask AI rewrite, demo dataset).**
 What works:
 
 - Full IB data collection pipeline (16 marker sections, 8 parsers, mock
-  mode via `LLDPQ_IB_MOCK=1`).
+mode via `LLDPQ_IB_MOCK=1`).
 - 10 analysis pages (SM Status, P_Key, Multicast, QoS, SHARP, Link
-  Errors, Search, Tracepath, Topology, Transceiver) driven by per-fabric
-  IB JSON.
+Errors, Search, Tracepath, Topology, Transceiver) driven by per-fabric
+IB JSON.
 - Fabric overview dashboard (IB-focused, replaces the Cumulus dashboard).
 - Ask AI (`ai.html` / `ai-api.sh`) -- IB-context system prompts +
-  IB-specific prompt chips (SM, Links, P_Keys, Multicast, SHARP,
-  Transceivers, Topology). Chat is disabled until an operator chooses a
-  provider (Ollama / OpenAI / Claude / Gemini) in Settings.
+IB-specific prompt chips (SM, Links, P_Keys, Multicast, SHARP,
+Transceivers, Topology). Chat is disabled until an operator chooses a
+provider (Ollama / OpenAI / Claude / Gemini) in Settings.
 - Devices / Provision / Discover / DHCP / ZTP for MLNX-OS (Cumulus
-  `sw-base`, NVUE deploy and `onie-install` paths are explicitly
-  disabled in the IB edition; admins push MLNX-OS configs and images
-  manually).
+`sw-base`, NVUE deploy and `onie-install` paths are explicitly
+disabled in the IB edition; admins push MLNX-OS configs and images
+manually).
 - Optional UFM REST integration (alerts, system inventory, topology
-  cross-check, BER history Chart.js). Set `UFM_URL` / `UFM_TOKEN` to
-  enable.
+cross-check, BER history Chart.js). Set `UFM_URL` / `UFM_TOKEN` to
+enable.
 - IB-focused alert engine (`check_alerts.py`): SM master loss, link
-  error severity, unreachable switches, hardware temp/fan.
+error severity, unreachable switches, hardware temp/fan.
 - **Demo dataset** baked into the image: launch with `LLDPQ_DEMO=true`
-  and the container pre-populates a 4-spine + 8-leaf + 16-HCA fake fat-
-  tree (NDR, SHARP enabled, realistic problem ports) so the UI is full
-  the moment it opens. See "Demo mode" below.
+and the container pre-populates a 4-spine + 8-leaf + 16-HCA fake fat-
+tree (NDR, SHARP enabled, realistic problem ports) so the UI is full
+the moment it opens. See "Demo mode" below.
 
 What is intentionally not in v0.4.0:
 
 - Optical menu item is hidden (Transceiver page covers per-module
-  health; BER history view is on the Telemetry page via Chart.js).
+health; BER history view is on the Telemetry page via Chart.js).
 - Device.html `Capture` and `cl-support` tabs are placeholders --
-  MLNX-OS exposes `tcpdump` / `show tech-support` only via `_shell`,
-  which is not whitelisted in `ib-api.sh`.
+MLNX-OS exposes `tcpdump` / `show tech-support` only via `_shell`,
+which is not whitelisted in `ib-api.sh`.
 
 See [.cursor/ROADMAP.md](./.cursor/ROADMAP.md) for the full plan and
 [.cursor/HANDOFF.md](./.cursor/HANDOFF.md) for the current open work list.
@@ -87,7 +87,7 @@ disagreement, 1 mixed-firmware transceiver model) so every analysis
 page shows real content rather than empty tables.
 
 ```bash
-docker run -d --name lldpq-ib \
+sudo docker run -d --name lldpq-ib \
   --network host --privileged \
   -e LLDPQ_DEMO=true \
   lldpq-ib:latest
@@ -96,12 +96,12 @@ docker run -d --name lldpq-ib \
 In demo mode:
 
 - `lldpq/devices.yaml` is replaced with a 28-entry fake inventory
-  (`username: nvidia`, fake ssh password `Nvidia@123` -- never used,
-  monitoring runs via SSH keys only).
+(`username: nvidia`, fake ssh password `Nvidia@123` -- never used,
+monitoring runs via SSH keys only).
 - `monitor-results/ib_*.json` are baked in with the demo dataset.
 - The cron pipeline is **disabled** so the fake data stays static. Stop
-  using `-e LLDPQ_DEMO=true` and restart the container to switch back
-  to live monitoring.
+using `-e LLDPQ_DEMO=true` and restart the container to switch back
+to live monitoring.
 
 To regenerate the dataset (e.g. tweak counts), edit
 `tests/generate_demo_data.py` and rebuild the image.
@@ -115,10 +115,10 @@ LLDPq-IB ships as a pre-built Docker image. Download, load, run:
 wget https://aliaydemir.com/lldpq-ib.tar.gz
 
 # 2. Load into Docker
-docker load < lldpq-ib.tar.gz
+sudo docker load < lldpq-ib.tar.gz
 
 # 3. Run
-docker run -d --name lldpq-ib \
+sudo docker run -d --name lldpq-ib \
   --network host --privileged \
   -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
   -v lldpq-ib-config:/home/lldpq/lldpq \
@@ -139,7 +139,7 @@ To see the UI populated with a fake 4-spine + 8-leaf + 16-HCA fabric,
 add `-e LLDPQ_DEMO=true`:
 
 ```bash
-docker run -d --name lldpq-ib \
+sudo docker run -d --name lldpq-ib \
   --network host --privileged \
   -e LLDPQ_DEMO=true \
   lldpq-ib:latest
@@ -148,10 +148,10 @@ docker run -d --name lldpq-ib \
 ### Update to a newer release
 
 ```bash
-docker stop lldpq-ib && docker rm lldpq-ib
+sudo docker stop lldpq-ib && sudo docker rm lldpq-ib
 wget -O lldpq-ib.tar.gz https://aliaydemir.com/lldpq-ib.tar.gz
-docker load < lldpq-ib.tar.gz
-docker run -d --name lldpq-ib --network host --privileged \
+sudo docker load < lldpq-ib.tar.gz
+sudo docker run -d --name lldpq-ib --network host --privileged \
   -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
   -v lldpq-ib-config:/home/lldpq/lldpq \
   -v lldpq-ib-ssh:/home/lldpq/.ssh \
@@ -189,10 +189,10 @@ container's SSH public key to each switch:
 
 ```bash
 # On the LLDPq-IB host:
-docker exec lldpq-ib ssh-keygen -t ed25519 -N '' -f /home/lldpq/.ssh/id_ed25519
+sudo docker exec lldpq-ib ssh-keygen -t ed25519 -N '' -f /home/lldpq/.ssh/id_ed25519
 
 # Copy the public key (output of below) to each MLNX-OS switch:
-docker exec lldpq-ib cat /home/lldpq/.ssh/id_ed25519.pub
+sudo docker exec lldpq-ib cat /home/lldpq/.ssh/id_ed25519.pub
 
 # On MLNX-OS:
 switch (config) # ssh client user admin authorized-key sshv2 "ssh-ed25519 AAAA..."
@@ -213,7 +213,7 @@ When UFM is configured, the **UFM** sidebar entry shows:
 To enable:
 
 ```bash
-docker run -d --name lldpq-ib \
+sudo docker run -d --name lldpq-ib \
   --network host --privileged \
   -e UFM_URL=https://ufm.example.com/ufmRest \
   -e UFM_TOKEN="$(echo -n 'admin:ufmpassword' | base64)" \
@@ -224,7 +224,7 @@ docker run -d --name lldpq-ib \
 - `UFM_URL` -- base REST URL (typically ends in `/ufmRest`). Required.
 - `UFM_TOKEN` -- base64-encoded `username:password` for HTTP Basic Auth. Required.
 - `UFM_VERIFY_TLS` -- `true` to verify the UFM TLS certificate, `false` (default)
-  to accept self-signed certs.
+to accept self-signed certs.
 
 ## Documentation
 
@@ -232,26 +232,28 @@ docker run -d --name lldpq-ib \
 - [.cursor/ARCHITECTURE.md](./.cursor/ARCHITECTURE.md) -- key design decisions
 - [.cursor/ROADMAP.md](./.cursor/ROADMAP.md) -- phases and milestones
 - [docs/HW-TEST-CHECKLIST.md](./docs/HW-TEST-CHECKLIST.md) -- first-deployment
-  playbook against real MLNX-OS IB switches
+playbook against real MLNX-OS IB switches
 
 ## Differences from LLDPq (Ethernet)
 
-| Aspect | LLDPq (Ethernet) | LLDPq-IB |
-|---|---|---|
-| Switch OS | Cumulus Linux (NVUE/FRR) | MLNX-OS |
-| L2 address | MAC | GUID |
-| L3 address | IP | LID |
-| Segmentation | VLAN | P_Key |
-| Routing protocol | BGP, OSPF | Subnet Manager |
-| Topology discovery | LLDP | `ibnetdiscover` |
-| Link flap counter | `carrier_changes` | `LinkDownedCounter` |
-| Config management | Ansible (optional) | None (monitoring-only) |
-| Deployment | install.sh OR Docker | **Docker-only** |
+
+| Aspect             | LLDPq (Ethernet)         | LLDPq-IB               |
+| ------------------ | ------------------------ | ---------------------- |
+| Switch OS          | Cumulus Linux (NVUE/FRR) | MLNX-OS                |
+| L2 address         | MAC                      | GUID                   |
+| L3 address         | IP                       | LID                    |
+| Segmentation       | VLAN                     | P_Key                  |
+| Routing protocol   | BGP, OSPF                | Subnet Manager         |
+| Topology discovery | LLDP                     | `ibnetdiscover`        |
+| Link flap counter  | `carrier_changes`        | `LinkDownedCounter`    |
+| Config management  | Ansible (optional)       | None (monitoring-only) |
+| Deployment         | install.sh OR Docker     | **Docker-only**        |
+
 
 ## Out of Scope
 
 - **Configuration management** -- LLDPq-IB does NOT push config to switches.
-  Use UFM or your IaC tool of choice for that.
+Use UFM or your IaC tool of choice for that.
 - **HCA (host) monitoring** -- only switch-side. Use `mlnx-tools` on hosts.
 - **Multi-subnet fabrics** -- single `infiniband-default` subnet assumed.
 
