@@ -2,370 +2,613 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>..::LLDPQ-IB:: Topology</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>..::LLDPQ::..</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
-    <link rel="stylesheet" href="/css/lldpq-ib.css">
+
+    <!-- Icon font -->
+    <link rel="stylesheet" href="next-icons.css">
+
+    <!-- CodeMirror for syntax highlighting -->
+    <link rel="stylesheet" href="/css/codemirror.min.css">
+    <link rel="stylesheet" href="/css/codemirror-theme.min.css">
+    <link rel="stylesheet" href="/css/codemirror-dialog.min.css">
+    <script src="/css/codemirror.min.js"></script>
+    <script src="/css/codemirror-dialog.min.js"></script>
+    <script src="/css/codemirror-searchcursor.min.js"></script>
+    <script src="/css/codemirror-search.min.js"></script>
+    <script src="/css/codemirror-jump-to-line.min.js"></script>
+    <script src="/css/codemirror-yaml.min.js"></script>
+    <script src="/css/codemirror-dot.js"></script>
+
+    <!-- Auth -->
     <script src="/css/auth.js"></script>
+
+    <!-- Cytoscape.js (local) -->
     <script src="cytoscape.min.js"></script>
     <script src="dagre.min.js"></script>
     <script src="cytoscape-dagre.js"></script>
-    <style>
-        body { padding: 16px; }
-        .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
-        .toolbar .stats { color: #888; font-size: 13px; margin-left: auto; }
-        #cy { width: 100%; height: calc(100vh - 200px); background: #1a1a1a; border-radius: 6px; border: 1px solid #333; }
-        .legend { display: flex; gap: 14px; font-size: 12px; align-items: center; margin-top: 8px; color: #aaa; }
-        .legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-        .info-panel { position: absolute; right: 36px; top: 130px; background: rgba(37, 37, 38, 0.95); border: 1px solid #404040; border-radius: 6px; padding: 12px 14px; min-width: 260px; max-width: 320px; font-size: 12px; display: none; z-index: 10; }
-        .info-panel h4 { color: #76b900; margin-bottom: 6px; font-size: 13px; }
-        .info-panel .kv { display: grid; grid-template-columns: 92px 1fr; gap: 4px; }
-        .info-panel .k { color: #888; }
-        .info-panel .v { color: #ddd; word-break: break-all; }
-        .info-panel .links-list { margin-top: 8px; max-height: 200px; overflow-y: auto; }
-        .info-panel .links-list .row { padding: 3px 0; border-top: 1px solid #2d2d2d; font-size: 11px; }
 
-        /* ----- File editor modal ----- */
-        .file-modal-overlay {
-            position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 1000;
-            display: none; align-items: center; justify-content: center;
+    <style>
+        /* Prevent browser autofill from changing input background */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus {
+            -webkit-box-shadow: 0 0 0 1000px #1a1a1a inset !important;
+            -webkit-text-fill-color: #fff !important;
+            caret-color: #fff !important;
         }
-        .file-modal-overlay.open { display: flex; }
-        .file-modal {
-            background: #1e1e1e; border: 1px solid #404040; border-radius: 8px;
-            width: 80vw; max-width: 1100px; height: 80vh; display: flex; flex-direction: column;
-            box-shadow: 0 12px 50px rgba(0,0,0,0.6);
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        .file-modal-head {
-            padding: 14px 20px; background: #252526; border-bottom: 1px solid #3c3c3c;
-            display: flex; align-items: center; justify-content: space-between;
-            border-radius: 8px 8px 0 0;
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
         }
-        .file-modal-head .title { color: #76b900; font-weight: 600; font-size: 14px; }
-        .file-modal-head .path  { color: #888; font-size: 12px; font-family: monospace; margin-left: 12px; }
-        .file-modal-head .close {
-            background: none; border: 0; color: #aaa; font-size: 22px;
-            cursor: pointer; line-height: 1; padding: 0 6px;
+
+        .toolbar {
+            background: #2a2a2a;
+            padding: 10px 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            border-bottom: 1px solid #3a3a3a;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 50000;
         }
-        .file-modal-head .close:hover { color: #fff; }
-        .file-modal-body { flex: 1; display: flex; flex-direction: column; padding: 12px 20px; gap: 8px; min-height: 0; }
-        .file-modal-body textarea {
-            flex: 1; background: #111; color: #d4d4d4; border: 1px solid #333;
-            border-radius: 4px; padding: 12px;
-            font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
-            font-size: 13px; line-height: 1.5; resize: none; tab-size: 2;
+
+        .toolbar button {
+            background: #3a3a3a;
+            color: #ccc;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
         }
-        .file-modal-body textarea:focus { outline: none; border-color: #76b900; }
-        .file-modal-foot {
-            padding: 12px 20px; background: #252526; border-top: 1px solid #3c3c3c;
-            border-radius: 0 0 8px 8px;
-            display: flex; align-items: center; justify-content: space-between;
+
+        .toolbar button:hover {
+            background: #4a4a4a;
         }
-        .file-modal-foot .status { color: #888; font-size: 12px; }
-        .file-modal-foot .actions { display: flex; gap: 8px; }
-        .file-modal-foot button {
-            padding: 7px 18px; border: 0; border-radius: 4px; cursor: pointer; font-size: 13px;
+
+        .toolbar button.active {
+            background: #76b900;
         }
-        .file-modal-foot .btn-cancel { background: #404040; color: #fff; }
-        .file-modal-foot .btn-save   { background: #76b900; color: #000; font-weight: 600; }
-        .file-modal-foot .btn-save:disabled { background: #3d5e00; color: #666; cursor: not-allowed; }
+
+        .toolbar .spacer {
+            flex: 1;
+        }
+
+        .toolbar .status {
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .toolbar .timestamp {
+            font-size: 11px;
+            color: #666;
+            margin-right: 15px;
+        }
+
+        .toggle-group {
+            display: flex;
+            gap: 15px;
+            margin-left: 20px;
+            padding-left: 20px;
+            border-left: 1px solid #3a3a3a;
+        }
+
+        .toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .toggle input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #76b900;
+            cursor: pointer;
+        }
+
+        .toggle:hover {
+            color: #fff;
+        }
+
+        #cy {
+            width: 100%;
+            height: calc(100vh - 45px);
+            margin-top: 45px;
+            background: #212121;
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* Force Cytoscape canvas layers below icon overlays */
+        #cy canvas {
+            z-index: 1 !important;
+        }
+
+        /* Legend in toolbar */
+        .legend {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 13px;
+            color: #aaa;
+            margin-left: 15px;
+            padding-left: 15px;
+            border-left: 1px solid #3a3a3a;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-line {
+            width: 25px;
+            height: 3px;
+            border-radius: 1px;
+        }
+
+        .legend-line.normal { background: #aaa; }
+        .legend-line.missing { background: #FF0000; }
+        .legend-line.fail { background: #FFED29; }
+
+        /* Tooltip */
+        .cy-tooltip {
+            position: fixed;
+            background: rgba(42, 42, 42, 0.98);
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #fff;
+            pointer-events: none;
+            z-index: 2147483647;
+            max-width: 250px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            border: 1px solid #3a3a3a;
+        }
+
+        .cy-tooltip h4 {
+            color: #76b900;
+            margin: 0 0 8px 0;
+            font-size: 14px;
+        }
+
+        .cy-tooltip p {
+            margin: 4px 0;
+        }
+
+        .cy-tooltip .label {
+            color: #888;
+        }
+
+        /* Font icon overlays */
+        .node-icon-overlay,
+        .node-icon-overlay * {
+            pointer-events: none !important;
+        }
+        
+        .node-icon-overlay {
+            position: absolute;
+            font-family: 'next-font';
+            font-size: 24px;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+        }
+
+        .node-icon-overlay .icon-bg {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            color: #333;
+        }
+
+        .node-icon-overlay .icon-fg {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Search box */
+        .search-box {
+            position: relative;
+        }
+        
+        .search-box input {
+            background: #3a3a3a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            padding: 6px 12px;
+            color: #fff;
+            font-size: 13px;
+            width: 180px;
+            outline: none;
+        }
+        
+        .search-box input:focus {
+            border-color: #76b900;
+        }
+        
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            margin-top: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 2000;
+        }
+        
+        .search-results.show {
+            display: block;
+        }
+        
+        .search-result-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            border-bottom: 1px solid #3a3a3a;
+        }
+        
+        .search-result-item:hover {
+            background: #3a3a3a;
+        }
+        
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+
+        /* Context Menu */
+        .context-menu {
+            position: fixed;
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 6px;
+            padding: 6px 0;
+            min-width: 160px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            z-index: 999999;
+            pointer-events: auto;
+        }
+        
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #ccc;
+            transition: background 0.15s;
+        }
+        
+        .context-menu-item:hover {
+            background: #3a3a3a;
+            color: #fff;
+        }
+        
+        .context-menu-separator {
+            height: 1px;
+            background: #4a4a4a;
+            margin: 6px 0;
+        }
+        
+        .context-menu-layer {
+            padding: 8px 12px;
+        }
+        
+        .context-menu-layer label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .context-menu-layer select {
+            width: 100%;
+            padding: 4px 8px;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            color: #ccc;
+            border-radius: 3px;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        
+        .context-menu * {
+            pointer-events: auto;
+        }
+
+        /* Details Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100000;
+        }
+        
+        .modal-overlay.show {
+            display: flex;
+        }
+        
+        .modal {
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 8px;
+            max-width: 700px;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid #4a4a4a;
+            background: #333;
+        }
+        
+        .modal-header h3 {
+            color: #76b900;
+            font-size: 16px;
+            margin: 0;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .modal-close:hover {
+            color: #fff;
+        }
+        
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            max-height: calc(80vh - 60px);
+        }
+        
+        .modal-info {
+            display: grid;
+            grid-template-columns: 100px 1fr;
+            gap: 8px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+        
+        .modal-info .label {
+            color: #888;
+        }
+        
+        .modal-info .value {
+            color: #fff;
+        }
+        
+        .modal-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        
+        .modal-table th {
+            background: #333;
+            color: #76b900;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 500;
+            border-bottom: 1px solid #4a4a4a;
+        }
+        
+        .modal-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #3a3a3a;
+            color: #ccc;
+        }
+        
+        .modal-table tr:hover td {
+            background: #333;
+        }
+        
+        .status-ok { color: #4CAF50; }
+        .status-missing { color: #FF0000; }
+        .status-unexpected { color: #FFED29; }
     </style>
 </head>
 <body>
-    <div class="page-header">
-        <div>
-            <div class="page-title">IB Topology</div>
-            <div class="last-updated" id="last-updated"></div>
-        </div>
-        <div class="action-buttons">
-            <button class="btn btn-secondary admin-only" onclick="openEditor('topology.dot', '/edit-topology', 'topology.dot')" title="Edit the expected wiring graph (admin only)">Edit topology.dot</button>
-            <button class="btn btn-secondary admin-only" onclick="openEditor('topology_config.yaml', '/edit-config', 'topology_config.yaml')" title="Edit the display layer config (admin only)">Edit display config</button>
-            <select id="layout-select" class="btn btn-secondary" onchange="reLayout()" style="background:#2d2d2d;color:#fff;">
-                <option value="dagre">Hierarchical</option>
-                <option value="concentric">Concentric</option>
-                <option value="circle">Circle</option>
-                <option value="grid">Grid</option>
-                <option value="cose">Force-Directed</option>
-            </select>
-            <button class="btn btn-secondary" onclick="fitGraph()">Fit</button>
-        </div>
-    </div>
-
-    <!-- File editor modal (shared for topology.dot + topology_config.yaml) -->
-    <div class="file-modal-overlay" id="file-editor-overlay" onclick="if(event.target===this)closeEditor()">
-        <div class="file-modal">
-            <div class="file-modal-head">
-                <div>
-                    <span class="title" id="file-editor-title">Edit</span>
-                    <span class="path"   id="file-editor-path"></span>
-                </div>
-                <button class="close" onclick="closeEditor()" title="Close">&times;</button>
-            </div>
-            <div class="file-modal-body">
-                <textarea id="file-editor-textarea" spellcheck="false" placeholder="Loading..."></textarea>
-            </div>
-            <div class="file-modal-foot">
-                <div class="status" id="file-editor-status"></div>
-                <div class="actions">
-                    <button class="btn-cancel" onclick="closeEditor()">Cancel</button>
-                    <button class="btn-save"   id="file-editor-save" onclick="saveEditor()">Save</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <div class="toolbar">
-        <div class="filter-group">
-            <label>Filter</label>
-            <select id="filter-type" onchange="applyFilter()" style="background:#2d2d2d;color:#fff;border:1px solid #404040;padding:5px 8px;border-radius:4px;">
-                <option value="">All Nodes</option>
-                <option value="switch">Switches Only</option>
-                <option value="switch+hca">Switches + HCAs</option>
-            </select>
+        <button onclick="runLLDPCheck()" id="runLLDPCheck">▶ Run LLDPq</button>
+        <button onclick="openConfigEditor()" id="btn-edit-order" style="display: none;">⚙ Edit Order</button>
+        <button onclick="location.reload()">↻ Refresh</button>
+        <button onclick="setLayout('dagre-lr')" id="btn-hlr">→ Horizontal</button>
+        <button onclick="setLayout('dagre-tb')" id="btn-hud" class="active">↓ Vertical</button>
+        <button onclick="setLayout('cose')" id="btn-force">◎ Force</button>
+        <button onclick="cy.fit(1); cy.zoom(cy.zoom() * 0.97);">⊞ Fit</button>
+        <button onclick="toggleFullscreen()" id="btn-fullscreen">⤢ Full</button>
+
+        <div class="toggle-group">
+            <label class="toggle">
+                <input type="checkbox" id="togglePorts" onchange="togglePorts(this.checked)">
+                <span>Ports</span>
+            </label>
+            <label class="toggle">
+                <input type="checkbox" id="toggleHostnames" checked onchange="toggleHostnames(this.checked)">
+                <span>HostName</span>
+            </label>
+            <label class="toggle">
+                <input type="checkbox" id="toggleEndpoints" checked onchange="toggleEndpoints(this.checked)">
+                <span>EndPoint</span>
+            </label>
+            <label class="toggle">
+                <input type="checkbox" id="toggleProblems" onchange="toggleProblems(this.checked)">
+                <span>Problems Only</span>
+            </label>
         </div>
-        <div class="stats" id="topology-stats">Loading...</div>
+
+        <div class="legend">
+            <div class="legend-item"><div class="legend-line normal"></div> Normal <span id="count-normal"></span></div>
+            <div class="legend-item" onclick="highlightLinkType('missing')" style="cursor:pointer;" title="Click to highlight missing links"><div class="legend-line missing"></div> Missing <span id="count-missing"></span></div>
+            <div class="legend-item" onclick="highlightLinkType('unexpected')" style="cursor:pointer;" title="Click to highlight unexpected links"><div class="legend-line fail"></div> Unexpected <span id="count-unexpected"></span></div>
+        </div>
+
+        <div class="spacer"></div>
+        
+        <span class="timestamp" id="topologyTimestamp"></span>
+        
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search device..." onkeyup="searchDevice(this.value)" onfocus="this.select()">
+            <div id="searchResults" class="search-results"></div>
+        </div>
+        
+        <span class="status" id="status">Loading...</span>
     </div>
 
     <div id="cy"></div>
 
-    <div class="legend">
-        <span><span class="dot" style="background:#76b900;"></span>Switch</span>
-        <span><span class="dot" style="background:#4fc3f7;"></span>HCA (Host)</span>
-        <span><span class="dot" style="background:#ba68c8;"></span>Router</span>
-        <span style="margin-left: 24px; color: #666;">Click a node for details</span>
+    <!-- Load topology data -->
+    <script src="../topology/topology.js"></script>
+
+    <!-- Cytoscape application -->
+    <script src="cyto-app.js"></script>
+    
+    <!-- Tooltip - must be last in body for z-index -->
+    <div class="cy-tooltip" id="tooltip" style="display:none;"></div>
+    
+    <!-- Context Menu (Node) -->
+    <div class="context-menu" id="contextMenu" style="display:none;">
+        <div class="context-menu-layer">
+            <label>Layer</label>
+            <select id="node-layer-select" onchange="changeNodeLayer(this.value)">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+                <option value="11">11</option>
+            </select>
+        </div>
+        <div class="context-menu-layer">
+            <label>Icon</label>
+            <select id="node-icon-select" onchange="changeNodeIcon(this.value)">
+                <option value="switch">Switch</option>
+                <option value="router">Router</option>
+                <option value="firewall">Firewall</option>
+                <option value="server">Server</option>
+                <option value="host">Host</option>
+            </select>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="hideNode()">
+            Hide Device
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="applyLayoutWithNode()">
+            Apply Layout
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="contextCopyHostname()"> Copy Hostname</div>
+        <div class="context-menu-item" onclick="contextCopyIP()"> Copy IP</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="contextSSH()"> SSH</div>
+        <div class="context-menu-item" onclick="contextOpenDevice()"> Open Device</div>
+        <div class="context-menu-item" onclick="contextDetails()"> Port Details</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="contextFocus()"> Focus</div>
+        <div class="context-menu-item" onclick="contextIsolate()"> Isolate</div>
     </div>
-
-    <div class="info-panel" id="info-panel">
-        <h4 id="info-title">Node Info</h4>
-        <div class="kv" id="info-kv"></div>
-        <div class="links-list" id="info-links"></div>
+    
+    <!-- Context Menu (Link) -->
+    <div class="context-menu" id="linkContextMenu" style="display:none;">
+        <div class="context-menu-item" onclick="contextCopyLinkInfo()"> Copy Link Info</div>
     </div>
-
-<script>
-let cy = null;
-let topoData = null;
-let editorState = { endpoint: null, path: null };
-
-document.addEventListener('DOMContentLoaded', loadTopology);
-
-// ===================== File editor modal =====================
-async function openEditor(title, endpoint, path) {
-    editorState = { endpoint, path };
-    document.getElementById('file-editor-title').textContent = `Edit ${title}`;
-    document.getElementById('file-editor-path').textContent = path;
-    document.getElementById('file-editor-overlay').classList.add('open');
-    const ta = document.getElementById('file-editor-textarea');
-    const status = document.getElementById('file-editor-status');
-    const saveBtn = document.getElementById('file-editor-save');
-    ta.value = 'Loading...';
-    ta.disabled = true;
-    saveBtn.disabled = true;
-    status.textContent = '';
-    status.style.color = '#888';
-    try {
-        const r = await fetch(endpoint, { cache: 'no-store' });
-        if (!r.ok) throw new Error(`HTTP ${r.status} -- are you logged in as admin?`);
-        const data = await r.json();
-        if (!data.success) throw new Error(data.error || 'Server refused the request');
-        ta.value = data.content || '';
-        ta.disabled = false;
-        saveBtn.disabled = false;
-        status.textContent = `Loaded ${ta.value.length} bytes`;
-    } catch (e) {
-        ta.value = '';
-        ta.disabled = true;
-        status.textContent = 'Error: ' + e.message;
-        status.style.color = '#f44336';
-    }
-}
-
-function closeEditor() {
-    document.getElementById('file-editor-overlay').classList.remove('open');
-}
-
-async function saveEditor() {
-    const ta = document.getElementById('file-editor-textarea');
-    const status = document.getElementById('file-editor-status');
-    const saveBtn = document.getElementById('file-editor-save');
-    if (!editorState.endpoint) return;
-    saveBtn.disabled = true;
-    status.style.color = '#888';
-    status.textContent = 'Saving...';
-    try {
-        const r = await fetch(editorState.endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: ta.value }),
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok || data.success === false) {
-            throw new Error(data.error || `HTTP ${r.status}`);
-        }
-        status.style.color = '#4caf50';
-        status.textContent = `Saved at ${new Date().toLocaleTimeString('sv-SE')}`;
-        saveBtn.disabled = false;
-        // Reload topology after saving topology.dot so the graph updates
-        if (editorState.path === 'topology.dot' && typeof loadTopology === 'function') {
-            setTimeout(() => loadTopology(), 400);
-        }
-    } catch (e) {
-        status.style.color = '#f44336';
-        status.textContent = 'Error: ' + e.message;
-        saveBtn.disabled = false;
-    }
-}
-
-async function loadTopology() {
-    try {
-        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
-        topoData = await resp.json();
-        document.getElementById('last-updated').textContent = topoData.last_update
-            ? 'Last Updated: ' + new Date(topoData.last_update).toLocaleString('sv-SE').replace('T', ' ')
-            : '';
-        const s = topoData.summary || {};
-        document.getElementById('topology-stats').textContent =
-            `${s.total_nodes || 0} nodes (${s.switches || 0} switches, ${s.hcas || 0} HCAs), ${s.total_links || 0} links`;
-        renderGraph();
-    } catch (e) {
-        document.getElementById('cy').innerHTML =
-            '<div class="no-data" style="padding:80px 20px;"><h3>No topology data yet</h3><p>Wait for the next monitor cycle.</p></div>';
-    }
-}
-
-function renderGraph() {
-    const filter = document.getElementById('filter-type').value;
-    const nodes = (topoData.nodes || []).filter(n => {
-        if (!filter) return true;
-        if (filter === 'switch') return n.type === 'switch';
-        if (filter === 'switch+hca') return n.type === 'switch' || n.type === 'hca';
-        return true;
-    });
-    const guidSet = new Set(nodes.map(n => n.guid));
-    const links = (topoData.links || []).filter(l =>
-        guidSet.has(l.source_guid) && guidSet.has(l.target_guid));
-
-    const elements = [
-        ...nodes.map(n => ({
-            data: {
-                id: n.guid,
-                label: n.description || n.guid.slice(-6),
-                type: n.type,
-                lid: n.lid,
-                description: n.description || '',
+    
+    <!-- Details Modal -->
+    <div class="modal-overlay" id="detailsModal" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="modalTitle">Device Details</h3>
+                <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Content will be inserted here -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- Config Editor Modal -->
+    <div class="modal-overlay" id="configEditorModal" onclick="closeConfigEditor(event)">
+        <div class="modal" style="width: 80%; max-width: 900px;" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3>Edit Device Order (topology_config.yaml)</h3>
+                <button class="modal-close" onclick="closeConfigEditorModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div style="padding: 15px; background: #333; border-bottom: 1px solid #4a4a4a; font-size: 12px; color: #888;">
+                    <b>layer:</b> vertical order (1=top) &nbsp;|&nbsp; 
+                    <b>icon:</b> switch, router, firewall, server, host &nbsp;|&nbsp;
+                    <b>pattern:</b> device name match
+                </div>
+                <div id="configEditorContainer" style="height: 400px; border: none;"></div>
+                <div style="padding: 15px; background: #333; border-top: 1px solid #4a4a4a; display: flex; justify-content: space-between; align-items: center;">
+                    <span id="configEditorStatus" style="color: #888; font-size: 12px;"></span>
+                    <div>
+                        <button onclick="closeConfigEditorModal()" style="background: #555; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 10px;">Cancel</button>
+                        <button onclick="saveConfigOnly()" style="background: #607d8b; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 10px;">Save</button>
+                        <button onclick="saveConfig()" style="background: #76b900; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Save & Run LLDPq</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Show edit buttons only for admin -->
+    <script>
+        (async function() {
+            await LLDPqAuth.check();
+            if (LLDPqAuth.isAdmin()) {
+                // Show config edit button for admin only
+                document.getElementById('btn-edit-order').style.display = '';
             }
-        })),
-        ...links.map((l, i) => ({
-            data: {
-                id: `e${i}`,
-                source: l.source_guid,
-                target: l.target_guid,
-                label: `${l.speed || ''}`,
-                src_port: l.source_port,
-                tgt_port: l.target_port,
-                speed: l.speed,
-            }
-        })),
-    ];
-
-    if (cy) cy.destroy();
-    cy = cytoscape({
-        container: document.getElementById('cy'),
-        elements: elements,
-        wheelSensitivity: 0.2,
-        style: [
-            {
-                selector: 'node',
-                style: {
-                    'background-color': '#888',
-                    'label': 'data(label)',
-                    'color': '#ddd',
-                    'font-size': '11px',
-                    'text-valign': 'bottom',
-                    'text-margin-y': 6,
-                    'text-outline-color': '#1a1a1a',
-                    'text-outline-width': 2,
-                    'width': '40px',
-                    'height': '40px',
-                    'border-width': '1px',
-                    'border-color': '#222',
-                }
-            },
-            { selector: 'node[type="switch"]', style: { 'background-color': '#76b900', 'shape': 'roundrectangle', 'width': '52px', 'height': '36px' } },
-            { selector: 'node[type="hca"]',    style: { 'background-color': '#4fc3f7', 'shape': 'ellipse', 'width': '32px', 'height': '32px' } },
-            { selector: 'node[type="router"]', style: { 'background-color': '#ba68c8', 'shape': 'diamond' } },
-            {
-                selector: 'edge',
-                style: {
-                    'width': 1.5,
-                    'line-color': '#444',
-                    'target-arrow-shape': 'none',
-                    'curve-style': 'bezier',
-                    'label': 'data(label)',
-                    'font-size': '8px',
-                    'color': '#666',
-                    'text-rotation': 'autorotate',
-                    'text-background-color': '#1a1a1a',
-                    'text-background-padding': '1px',
-                    'text-background-opacity': 0.7,
-                }
-            },
-            { selector: ':selected', style: { 'border-color': '#ff9800', 'border-width': '3px' } },
-        ],
-        layout: layoutConfig(document.getElementById('layout-select').value),
-    });
-
-    cy.on('tap', 'node', evt => showNodeInfo(evt.target));
-    cy.on('tap', (evt) => {
-        if (evt.target === cy) document.getElementById('info-panel').style.display = 'none';
-    });
-}
-
-function layoutConfig(name) {
-    switch (name) {
-        case 'dagre': return { name: 'dagre', rankDir: 'TB', nodeSep: 60, rankSep: 80 };
-        case 'concentric': return { name: 'concentric', concentric: n => n.data('type') === 'switch' ? 2 : 1, levelWidth: () => 1 };
-        case 'circle': return { name: 'circle' };
-        case 'grid': return { name: 'grid' };
-        case 'cose': return { name: 'cose', animate: false, nodeRepulsion: 8000 };
-        default: return { name: 'dagre' };
-    }
-}
-
-function reLayout() {
-    if (!cy) return;
-    cy.layout(layoutConfig(document.getElementById('layout-select').value)).run();
-}
-
-function fitGraph() { if (cy) cy.fit(null, 30); }
-
-function applyFilter() { renderGraph(); }
-
-function showNodeInfo(node) {
-    const data = node.data();
-    document.getElementById('info-title').textContent = data.description || data.label;
-    const kv = document.getElementById('info-kv');
-    kv.innerHTML = `
-        <div class="k">GUID</div><div class="v">${data.id}</div>
-        <div class="k">Type</div><div class="v">${data.type || '-'}</div>
-        <div class="k">LID</div><div class="v">${data.lid != null ? data.lid : '-'}</div>
-        <div class="k">Description</div><div class="v">${data.description || '-'}</div>
-    `;
-    // Show connected links
-    const myGuid = data.id;
-    const links = (topoData.links || []).filter(l =>
-        l.source_guid === myGuid || l.target_guid === myGuid);
-    document.getElementById('info-links').innerHTML = links.length === 0
-        ? '<div style="color:#888; margin-top:8px;">No links</div>'
-        : `<div style="margin-top:8px; color:#76b900; font-weight:600;">Links (${links.length})</div>` +
-          links.map(l => {
-              const isLocal = l.source_guid === myGuid;
-              const localPort = isLocal ? l.source_port : l.target_port;
-              const remoteGuid = isLocal ? l.target_guid : l.source_guid;
-              const remotePort = isLocal ? l.target_port : l.source_port;
-              const remoteDesc = isLocal ? l.target_desc : l.source_desc;
-              return `<div class="row">port ${localPort} → ${remoteDesc || remoteGuid.slice(-6)} (port ${remotePort}) <span style="color:#ff9800; float:right;">${l.speed || ''}</span></div>`;
-          }).join('');
-    document.getElementById('info-panel').style.display = 'block';
-}
-</script>
+        })();
+    </script>
 </body>
 </html>

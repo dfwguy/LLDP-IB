@@ -164,10 +164,12 @@ if [ "${LLDPQ_DEMO:-false}" = "true" ] && [ -d /opt/lldpq-demo ]; then
         cp /opt/lldpq-demo/devices.yaml /home/lldpq/lldpq/devices.yaml
     fi
 
-    # Web-root artefacts
+    # Web-root artefacts (+ pre-baked topology.js for the cytoscape view)
     cp /opt/lldpq-demo/assets.ini /var/www/html/assets.ini
     cp /opt/lldpq-demo/topology.dot /var/www/html/topology.dot
     cp /opt/lldpq-demo/topology_config.yaml /var/www/html/topology_config.yaml
+    mkdir -p /var/www/html/topology
+    cp /opt/lldpq-demo/topology/topology.js /var/www/html/topology/topology.js 2>/dev/null || true
 
     chown -R lldpq:www-data /home/lldpq/lldpq/monitor-results \
         /var/www/html/monitor-results \

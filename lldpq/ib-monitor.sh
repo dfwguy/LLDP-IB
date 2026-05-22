@@ -317,6 +317,15 @@ ANALYZE_END=$(date +%s)
 ANALYZE_DURATION=$((ANALYZE_END - ANALYZE_START))
 echo "Analysis complete in ${ANALYZE_DURATION}s"
 
+# Generate the cytoscape-friendly topology.js (must run AFTER parsers, since
+# it consumes monitor-results/ib_topology.json + ib_link_errors.json).
+WEB_ROOT_FOR_TOPO="${WEB_ROOT:-/var/www/html}"
+if [ -f "$SCRIPT_DIR/generate_ib_topology.py" ]; then
+    python3 "$SCRIPT_DIR/generate_ib_topology.py" \
+        --lldpq-dir "$SCRIPT_DIR" \
+        --web-root  "$WEB_ROOT_FOR_TOPO" >/dev/null 2>&1 || true
+fi
+
 # ============================================================================
 # Publish results to web root
 # ============================================================================

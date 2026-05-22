@@ -89,13 +89,18 @@ COPY bin/ /usr/local/bin/
 COPY tests/ /home/lldpq/tests/
 
 # Pre-populate /var/www/html/monitor-results + assets.ini + topology.dot
-# with the demo fabric (4 spine + 8 leaf + 16 HCA). The entrypoint copies
-# this baseline into the runtime volume only when LLDPQ_DEMO=true.
+# + topology/topology.js with the demo fabric (4 spine + 8 leaf + 16 HCA).
+# The entrypoint copies this baseline into the runtime volume only when
+# LLDPQ_DEMO=true. We also pre-bake topology.js so the cytoscape view is
+# populated on first page load (without waiting for any cron pass).
 RUN mkdir -p /opt/lldpq-demo \
     && python3 /home/lldpq/tests/generate_demo_data.py \
         --target /opt/lldpq-demo/monitor-results \
         --web-root /opt/lldpq-demo \
     && cp /home/lldpq/tests/fixtures/demo-devices.yaml /opt/lldpq-demo/devices.yaml \
+    && python3 /home/lldpq/lldpq/generate_ib_topology.py \
+        --lldpq-dir /opt/lldpq-demo \
+        --web-root  /opt/lldpq-demo \
     && chown -R lldpq:www-data /opt/lldpq-demo \
     && find /opt/lldpq-demo -type d -exec chmod 775 {} \; \
     && find /opt/lldpq-demo -type f -exec chmod 664 {} \;
