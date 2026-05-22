@@ -129,18 +129,66 @@ chmod 700 /var/lib/lldpq/sessions
 chmod 775 /var/lib/lldpq/upgrade-jobs
 echo "✓ Authentication ready"
 
+# ─── Demo mode (LLDPQ_DEMO=true) ───
+# When set, copies the baked /opt/lldpq-demo baseline into the runtime
+# locations so the UI shows a populated 4-spine + 8-leaf + 16-HCA fabric
+# without needing real switches. Cron is disabled in demo mode so the
+# fake JSON does not get overwritten by a failing ib-monitor pass.
+if [ "${LLDPQ_DEMO:-false}" = "true" ] && [ -d /opt/lldpq-demo ]; then
+    echo "================================================"
+    echo "  LLDPQ_DEMO=true detected"
+    echo "  Loading 4-spine + 8-leaf + 16-HCA fake fabric"
+    echo "================================================"
+
+    # JSON outputs (overwrite -- this is the whole point of demo mode)
+    mkdir -p /home/lldpq/lldpq/monitor-results
+    cp -r /opt/lldpq-demo/monitor-results/. /home/lldpq/lldpq/monitor-results/
+    cp -r /opt/lldpq-demo/monitor-results/. /var/www/html/monitor-results/ 2>/dev/null || true
+
+    # devices.yaml (only if user did not mount their own)
+    if [ ! -f /home/lldpq/lldpq/devices.yaml ] \
+            || grep -q '^# Example layout' /home/lldpq/lldpq/devices.yaml 2>/dev/null; then
+        cp /opt/lldpq-demo/devices.yaml /home/lldpq/lldpq/devices.yaml
+    fi
+
+    # Web-root artefacts
+    cp /opt/lldpq-demo/assets.ini /var/www/html/assets.ini
+    cp /opt/lldpq-demo/topology.dot /var/www/html/topology.dot
+    cp /opt/lldpq-demo/topology_config.yaml /var/www/html/topology_config.yaml
+
+    chown -R lldpq:www-data /home/lldpq/lldpq/monitor-results \
+        /var/www/html/monitor-results \
+        /var/www/html/assets.ini \
+        /var/www/html/topology.dot \
+        /var/www/html/topology_config.yaml \
+        /home/lldpq/lldpq/devices.yaml 2>/dev/null || true
+    chmod 664 /var/www/html/assets.ini /var/www/html/topology.dot \
+        /var/www/html/topology_config.yaml \
+        /home/lldpq/lldpq/devices.yaml 2>/dev/null || true
+
+    echo "  ✓ Demo dataset loaded"
+fi
+
 # ─── Cron Setup ───
-# lldpq = assets.sh + ib-monitor.sh (Phase 2) + alerts
-# lldpq-trigger = web UI refresh buttons
-cat > /etc/cron.d/lldpq << 'CRON'
-# LLDPq-IB full run (assets + ib-monitor + alerts) - every 10 minutes
+# lldpq         = ib-assets.sh + ib-monitor.sh + check_alerts.py (full IB pass)
+# lldpq-trigger = web UI Refresh buttons (ib-assets/ib-monitor/get-configs on demand)
+# get-conf      = MLNX-OS running-config backup
+#
+# In LLDPQ_DEMO=true mode cron is skipped so the baked fake fabric stays put.
+if [ "${LLDPQ_DEMO:-false}" = "true" ]; then
+    rm -f /etc/cron.d/lldpq
+    echo "  ✓ Cron disabled (demo mode -- fake data is static)"
+else
+    cat > /etc/cron.d/lldpq << 'CRON'
+# LLDPq-IB full run (ib-assets + ib-monitor + alerts) - every 10 minutes
 */10 * * * * lldpq /usr/local/bin/lldpq > /dev/null 2>&1
 # Web trigger daemon (handles Refresh buttons from UI) - every minute
 * * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
 # Config backup - every 12 hours
 0 */12 * * * lldpq /usr/local/bin/get-conf > /dev/null 2>&1
 CRON
-chmod 644 /etc/cron.d/lldpq
+    chmod 644 /etc/cron.d/lldpq
+fi
 
 # ─── DHCP Server Setup ───
 # Ensure DHCP directories and files exist

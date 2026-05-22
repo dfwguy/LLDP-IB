@@ -29,14 +29,14 @@ Roles:
   Add @role to devices.yaml:  10.10.100.10: Spine1 @spine
   Then filter:                send-cmd -r spine -c "uptime"
 
-Examples:
-  send-cmd                             # Run commands from file on all devices
-  send-cmd -c "nv show system"         # Run command on all devices
-  send-cmd -r spine -c "uptime"        # Run command only on @spine devices
-  send-cmd -r leaf -c "nv show bgp"    # Run command only on @leaf devices
-  send-cmd --roles                     # Show available roles
-  send-cmd -l                          # List commands in file
-  send-cmd -e                          # Edit commands file
+Examples (MLNX-OS):
+  send-cmd                                # Run commands from file on all devices
+  send-cmd -c "show version"              # Run command on all devices
+  send-cmd -r spine -c "show inventory"   # Run command only on @spine devices
+  send-cmd -r leaf  -c "ib sminfo"        # Run command only on @leaf devices
+  send-cmd --roles                        # Show available roles
+  send-cmd -l                             # List commands in file
+  send-cmd -e                             # Edit commands file
 
 EOF
     exit 0

@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         .telemetry-card { background: #252526; border-radius: 6px; padding: 20px; margin-bottom: 16px; }
         .telemetry-card h3 { color: #76b900; font-size: 15px; margin-bottom: 8px; }
@@ -14,6 +15,27 @@
         .metric-item { background: #1a1a1a; padding: 10px 12px; border-radius: 4px; }
         .metric-item .name { font-size: 12px; color: #888; }
         .metric-item .desc { font-size: 11px; color: #666; }
+
+        .ber-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+        .ber-controls label { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .ber-controls select, .ber-controls input {
+            background: #1a1a1a; border: 1px solid #3c3c3c; color: #d4d4d4;
+            padding: 6px 10px; border-radius: 4px; font-size: 13px;
+        }
+        .ber-controls button {
+            background: #76b900; color: #000; border: 0; padding: 7px 14px;
+            border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600;
+        }
+        .ber-controls button:disabled {
+            background: #404040; color: #888; cursor: not-allowed;
+        }
+        .ber-chart-wrap {
+            background: #111; padding: 12px; border-radius: 4px;
+            min-height: 320px; position: relative;
+        }
+        .ber-empty {
+            color: #666; text-align: center; padding: 40px 0; font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -62,6 +84,46 @@
         <div id="ufm-state-body"><div class="loading">Checking UFM availability...</div></div>
     </div>
 
+    <!-- UFM BER History -->
+    <div class="telemetry-card" id="ber-card" style="display:none;">
+        <h3>BER History (UFM telemetry)</h3>
+        <div class="desc">
+            Historical port BER from UFM's <code>/telemetry/historical/ports</code> endpoint.
+            Bit-error-rate is rendered on a logarithmic scale; lower is better.
+            A typical NDR/HDR link sits below 1e-12.
+        </div>
+        <div class="ber-controls">
+            <label for="ber-counter">Counter</label>
+            <select id="ber-counter">
+                <option value="ber_total_phy" selected>ber_total_phy</option>
+                <option value="ber_eff">ber_eff</option>
+                <option value="symbol_errors">symbol_errors</option>
+                <option value="link_downed_counter">link_downed_counter</option>
+            </select>
+
+            <label for="ber-duration">Range</label>
+            <select id="ber-duration">
+                <option value="1h">last 1h</option>
+                <option value="6h" selected>last 6h</option>
+                <option value="24h">last 24h</option>
+                <option value="7d">last 7d</option>
+            </select>
+
+            <label for="ber-device">Device</label>
+            <select id="ber-device" style="min-width: 240px;">
+                <option value="">(all devices)</option>
+            </select>
+
+            <button id="ber-refresh" onclick="loadBerHistory()">Refresh chart</button>
+        </div>
+        <div class="ber-chart-wrap">
+            <canvas id="ber-chart" height="120"></canvas>
+            <div id="ber-empty" class="ber-empty" style="display:none;">
+                No telemetry rows returned for the selected filters.
+            </div>
+        </div>
+    </div>
+
     <div class="telemetry-card">
         <h3>What is collected by the local monitor</h3>
         <div class="metric-section">
@@ -93,7 +155,17 @@
     </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', checkUfm);
+let berChart = null;
+let ufmReachable = false;
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkUfm();
+    if (ufmReachable) {
+        await populateDeviceSelect();
+        document.getElementById('ber-card').style.display = '';
+        loadBerHistory();
+    }
+});
 
 async function checkUfm() {
     document.getElementById('last-updated').textContent =
@@ -105,6 +177,7 @@ async function checkUfm() {
         const banner = document.getElementById('banner');
 
         if (!data.configured) {
+            ufmReachable = false;
             body.innerHTML = `
                 <div style="color:#888;">UFM is not configured.</div>
                 <p style="margin-top: 8px; color:#aaa; font-size: 12px;">
@@ -114,11 +187,13 @@ async function checkUfm() {
   -e UFM_URL=https://ufm.example.com/ufmRest \\
   -e UFM_TOKEN=$(echo -n 'admin:ufmpassword' | base64) \\
   ...</pre>`;
-            banner.innerHTML = '<div class="alert-box alert-info">Telemetry from UFM is unavailable. Local monitor data is still collected (see sections below).</div>';
+            banner.innerHTML = '<div class="alert-box alert-info">Telemetry from UFM is unavailable. Local monitor data is still collected (see sections below). BER history requires UFM.</div>';
         } else if (!data.reachable) {
+            ufmReachable = false;
             body.innerHTML = `<div style="color:#f44336;">UFM at <span class="mono">${data.url}</span> is unreachable. ${data.error || ''}</div>`;
             banner.innerHTML = '<div class="alert-box alert-danger">UFM not reachable. Verify URL, token, and network connectivity.</div>';
         } else {
+            ufmReachable = true;
             body.innerHTML = `
                 <div style="color:#4caf50;">UFM connected. Version: <span class="badge badge-blue">${data.version || 'unknown'}</span></div>
                 <p style="margin-top: 8px;">
@@ -127,10 +202,144 @@ async function checkUfm() {
             banner.innerHTML = '';
         }
     } catch (e) {
+        ufmReachable = false;
         document.getElementById('ufm-state-body').innerHTML =
             `<div style="color:#f44336;">Error: ${e.message}</div>`;
     }
 }
+
+// ---- BER history (UFM telemetry) ----
+
+async function populateDeviceSelect() {
+    // Use local ib_topology.json to get switch GUIDs (UFM authoritatively has these too).
+    try {
+        const r = await fetch('/monitor-results/ib_topology.json?t=' + Date.now(), { cache: 'no-store' });
+        if (!r.ok) return;
+        const topo = await r.json();
+        const select = document.getElementById('ber-device');
+        const switches = (topo.nodes || [])
+            .filter(n => (n.type || '').toLowerCase() === 'switch' && n.guid)
+            .sort((a, b) => (a.hostname || '').localeCompare(b.hostname || ''));
+        for (const s of switches) {
+            const opt = document.createElement('option');
+            opt.value = s.guid;
+            opt.textContent = `${s.hostname || s.guid.slice(0, 14)} (${s.guid.slice(0, 18)}…)`;
+            select.appendChild(opt);
+        }
+    } catch (e) {
+        // ignore; "(all devices)" still works
+    }
+}
+
+function durationToSeconds(d) {
+    const m = String(d || '').match(/^(\d+)([hd])$/);
+    if (!m) return 6 * 3600;
+    const n = parseInt(m[1], 10);
+    return m[2] === 'd' ? n * 86400 : n * 3600;
+}
+
+async function loadBerHistory() {
+    if (!ufmReachable) return;
+    const counter = document.getElementById('ber-counter').value;
+    const duration = document.getElementById('ber-duration').value;
+    const deviceGuid = document.getElementById('ber-device').value;
+    const btn = document.getElementById('ber-refresh');
+    const empty = document.getElementById('ber-empty');
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    const params = new URLSearchParams();
+    params.set('counter', counter);
+    params.set('duration', String(durationToSeconds(duration)));
+    if (deviceGuid) params.set('system_guid', deviceGuid);
+
+    try {
+        const r = await fetch('/ufm-api.sh?action=ber-history&' + params.toString(),
+                              { cache: 'no-store' });
+        const raw = await r.json();
+        // Normalize: UFM telemetry payloads vary by version. Accept both
+        // [{port_guid, counter, results:[{timestamp,value}]}] and
+        // {data: [{...same shape...}]}.
+        const series = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+
+        if (!series.length) {
+            renderEmptyChart(empty, 'UFM returned no rows for the selected filters.');
+            return;
+        }
+
+        renderBerChart(series, counter);
+        empty.style.display = 'none';
+    } catch (e) {
+        renderEmptyChart(empty, 'Failed to load: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Refresh chart';
+    }
+}
+
+function renderEmptyChart(emptyEl, message) {
+    if (berChart) { berChart.destroy(); berChart = null; }
+    emptyEl.style.display = '';
+    emptyEl.textContent = message;
+}
+
+function renderBerChart(series, counter) {
+    const ctx = document.getElementById('ber-chart').getContext('2d');
+    if (berChart) berChart.destroy();
+
+    // Limit to first ~20 ports for readability
+    const limited = series.slice(0, 20);
+    const datasets = limited.map((row, idx) => {
+        const label = row.object_name || row.port_guid || row.system_guid || ('series-' + idx);
+        const points = (row.results || row.values || []).map(p => ({
+            x: p.timestamp || p.time || p.ts,
+            y: parseFloat(p.value ?? p.v ?? 0)
+        })).filter(p => Number.isFinite(p.y) && p.y >= 0);
+        return {
+            label: String(label).slice(0, 32),
+            data: points,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            tension: 0.25,
+        };
+    });
+
+    const isBer = counter.startsWith('ber');
+    berChart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#d4d4d4', font: { size: 11 } } },
+                tooltip: { mode: 'index', intersect: false },
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'minute' },
+                    ticks: { color: '#888' },
+                    grid:  { color: '#2a2a2a' },
+                },
+                y: {
+                    type: isBer ? 'logarithmic' : 'linear',
+                    ticks: { color: '#888' },
+                    grid:  { color: '#2a2a2a' },
+                    title: {
+                        display: true,
+                        text: isBer ? counter + ' (log scale)' : counter,
+                        color: '#888',
+                    },
+                },
+            },
+        },
+    });
+}
 </script>
+
+<!-- Chart.js date adapter (date-fns) for time-scale -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </body>
 </html>

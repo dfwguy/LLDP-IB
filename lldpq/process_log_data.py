@@ -31,16 +31,18 @@ class LogAnalyzer:
         ]
         
         # Patterns to completely ignore (not even counted as info)
-        # These are our own monitoring commands or noise
+        # These are our own monitoring commands or known MLNX-OS noise.
         self.skip_patterns = [
-            r'ethtool -m swp',               # Our optical monitoring commands
-            r'cumulus.*sudo.*ethtool',       # sudo logs from our monitoring
-            r'cumulus.*COMMAND=.*ethtool',   # sudo command logs
-            r'cumulus.*COMMAND=.*l1-show',   # sudo l1-show commands
-            r'cumulus.*COMMAND=.*sensors',   # sudo sensors commands
-            r'pam_unix.*session opened',     # PAM session logs
-            r'pam_unix.*session closed',     # PAM session logs
-            r'connection collision resolution',  # Normal BGP behavior
+            # ---- LLDPq-IB ssh polling noise ----
+            r'admin.*COMMAND=.*show interfaces ib',
+            r'admin.*COMMAND=.*ib (sminfo|ibnetdiscover|iblinkinfo|perfquery)',
+            r'admin.*COMMAND=.*show (running-config|version|inventory|log)',
+            r'pam_unix.*session opened',
+            r'pam_unix.*session closed',
+            # ---- MLNX-OS chatter that is not actionable ----
+            r'sx_sdk.*bulk-cntr.*ioctl',     # ASIC counter read transients
+            r'mst-pci.*pci command',         # mst driver chatter
+            r'OPENSM_SUBNET',                # OpenSM sweep noise (handled by SM page)
         ]
         
         # Enhanced severity patterns for network infrastructure
@@ -53,9 +55,11 @@ class LogAnalyzer:
                 r'priority:\s*[0-2]',  # Emergency, Alert, Critical
                 # Network-specific critical patterns
                 r'\b(bgp.*down|ospf.*down|routing.*failed|switching.*failed)\b',
-                r'\b(mlag.*failed|clag.*conflict|spanning.*tree.*blocked)\b',
-                r'\b(switchd.*died|nvued.*crashed|frr.*stopped)\b',
-                r'\b(hardware.*fault|transceiver.*failed|port.*failed)\b',
+            # IB / MLNX-OS critical patterns
+            r'\b(opensm.*(crashed|died|exited))\b',
+            r'\b(sm.*master.*lost|sm.*not.*responding|sm.*disagreement)\b',
+            r'\b(switchd.*died|sxd.*crashed|hardware.*fault)\b',
+            r'\b(transceiver.*failed|port.*failed|cable.*disconnect)\b',
             ],
             'warning': [
                 r'\b(warning|warn|caution|alert)\b',
@@ -63,12 +67,12 @@ class LogAnalyzer:
                 r'\b(timeout|retry|retransmit|flap|unstable)\b',
                 r'\b(deprecat|obsolet|unsupport)\b',
                 r'priority:\s*[3-4]',  # Error, Warning
-                # Network-specific warning patterns
-                r'\b(bgp.*flap|neighbor.*timeout|routing.*convergence)\b',
-                r'\b(stp.*topology.*change|vlan.*inconsistent)\b',
-                r'\b(mlag.*mismatch|bond.*degraded|link.*unstable)\b',
-                r'\b(high.*utilization|buffer.*full|queue.*overflow)\b',
-                r'\b(authentication.*failed|permission.*denied)\b',
+            # IB / MLNX-OS warning patterns
+            r'\b(opensm.*sweep.*long|sm.*standby.*flapping)\b',
+            r'\b(link.*went.*down|port.*reset|port.*down)\b',
+            r'\b(symbol.*error|crc.*error|port.*recv.*error)\b',
+            r'\b(buffer.*full|congestion|pkey.*mismatch)\b',
+            r'\b(authentication.*failed|permission.*denied)\b',
             ],
             'error': [
                 r'\b(error|err|exception|fault|fail)\b',

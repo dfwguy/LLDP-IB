@@ -1,79 +1,63 @@
-# Copyright (c) 2024 LLDPq Project
+# Copyright (c) 2024-2026 LLDPq Project
 # Licensed under MIT License - see LICENSE file for details
-
+#
 # =============================================================================
-# TOPOLOGY_CONFIG.YAML - LLDPq Expected Network Topology Definition
+# TOPOLOGY_CONFIG.YAML -- LLDPq-IB Topology Display Configuration
 # =============================================================================
 #
-# Topology Generation Mode:
-# - minimal: Uses generate_topology.py (faster, basic topology)
-# - full: Uses generate_topology_full.py (comprehensive, detailed topology)
-# This setting determines which script lldp-validate.py will automatically call
-# If you want to use the full topology, the topology will also be displayed for devices discovered with LLDP.
+# Drives layer placement on the Topology page (topology/main.html) and the
+# device-category icons used in the visual fabric diagram.
+#
+# Pattern matching is REGEX, evaluated against each hostname. First match wins.
+#
+# Examples:
+#   - "spine"            matches any hostname containing "spine"
+#   - "^ib-spine-"       matches hostnames starting with "ib-spine-"
+#   - "ib-leaf-[0-9]+$"  matches "ib-leaf-01", "ib-leaf-02", ...
+#   - "border|edge"      matches devices containing "border" OR "edge"
+#
+# Possible icons:
+#   - switch      (default for IB switches; renders as a rack switch)
+#   - router      (multi-subnet / IB router)
+#   - host        (HCA-bearing server)
+#   - server      (alternative to host)
+#   - firewall    (rare in IB networks)
+#   - unknown     (fallback)
+#
+# Topology mode:
+#   - minimal -> generate_topology.py (faster, switches only)
+#   - full    -> generate_topology_full.py (switches + every HCA neighbour)
 
 topology: minimal  # [full] or [minimal]
 
-# Topology Device Configuration
-# This file defines device categorization for topology generation
-# Edit this file to customize device layers and icons
-#
-# Pattern matching supports REGEX:
-#
-#   - "spine"           matches any device containing "spine"
-#   - "^spine-"         matches devices starting with "spine-"
-#   - "leaf-[0-9]+$"    matches devices ending with "leaf-" + numbers
-#   - "border|edge"     matches devices containing "border" OR "edge"
-#   - "^dc[12]-spine"   matches dc1-spine-01, dc2-spine-02, etc.
-#
-# Possible icons:
-#
-# - switch    🔀
-# - router    🌐
-# - firewall  🔥 [EndPoint]
-# - server    🖥️ [EndPoint]
-# - host      💻 [EndPoint]
-# - unknown   ❓ [EndPoint]
-
 device_categories:
 
-  - pattern: "inband-fw"
+  # IB core (multi-subnet routers; uncommon in single-fabric deployments)
+  - pattern: "^ib-core-|^core-"
     layer: 1
-    icon: "firewall"
+    icon: "router"
 
-  - pattern: "border"
+  # Spines (top of the fat-tree)
+  - pattern: "^ib-spine-|spine"
     layer: 2
     icon: "switch"
 
-  - pattern: "spine"
+  # Leaves (ToR / aggregation)
+  - pattern: "^ib-leaf-|leaf"
     layer: 3
     icon: "switch"
 
-  - pattern: "leaf"
+  # Hosts (HCA endpoints)
+  - pattern: "^ib-host-|host|dgx|gpu"
     layer: 4
-    icon: "switch"
+    icon: "host"
 
-  - pattern: "oob-fw"
-    layer: 5
-    icon: "firewall"
-
-  - pattern: "core"
-    layer: 6
-    icon: "switch"
-
+  # Generic switch fallback for hostnames that don't match the above
   - pattern: "switch"
-    layer: 7
+    layer: 3
     icon: "switch"
 
-# Default category for unmatched devices
+# Default category for unmatched hostnames
 default:
   layer: 9
-  icon: "server"
-
-# Special conditional rules for devices with complex logic
-special_rules:
-  - pattern: "LF"
-    type: "even_odd_suffix"
-    even_layer: 8
-    odd_layer: 7
-    icon: "switch"
-    description: "LF devices: even numbers -> layer 8, odd numbers -> layer 7"
+  icon: "host"

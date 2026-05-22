@@ -1,0 +1,53 @@
+# LLDPq-IB demo devices.yaml -- 4 spine + 8 leaf + 16 HCA fake fabric.
+#
+# Copied into /home/lldpq/lldpq/devices.yaml at container start when the
+# image is launched with LLDPQ_DEMO=true. The default username matches the
+# fake credentials used by the demo dataset:
+#
+#   ssh username: nvidia
+#   ssh password: Nvidia@123      <-- demo only, never used by ib-monitor
+#                                     (LLDPq-IB collects via SSH key auth)
+#
+# In a real deployment, replace this file with your own devices.yaml and
+# remove the LLDPQ_DEMO=true env var.
+
+defaults:
+  username: nvidia
+
+devices:
+  # ----- Spines (Quantum-2 NDR) -----
+  10.10.100.10: ib-spine-01 @spine
+  10.10.100.11: ib-spine-02 @spine
+  10.10.100.12: ib-spine-03 @spine
+  10.10.100.13: ib-spine-04 @spine
+
+  # ----- Leaves (Quantum-2 NDR) -----
+  10.10.100.20: ib-leaf-01 @leaf
+  10.10.100.21: ib-leaf-02 @leaf
+  10.10.100.22: ib-leaf-03 @leaf
+  10.10.100.23: ib-leaf-04 @leaf
+  10.10.100.24: ib-leaf-05 @leaf
+  10.10.100.25: ib-leaf-06 @leaf
+  10.10.100.26: ib-leaf-07 @leaf
+  10.10.100.27: ib-leaf-08 @leaf
+
+  # ----- HCAs (ConnectX-7 hosts; shown in topology, not polled) -----
+  10.10.100.100: ib-host-01 @host
+  10.10.100.101: ib-host-02 @host
+  10.10.100.102: ib-host-03 @host
+  10.10.100.103: ib-host-04 @host
+  10.10.100.104: ib-host-05 @host
+  10.10.100.105: ib-host-06 @host
+  10.10.100.106: ib-host-07 @host
+  10.10.100.107: ib-host-08 @host
+  10.10.100.108: ib-host-09 @host
+  10.10.100.109: ib-host-10 @host
+  10.10.100.110: ib-host-11 @host
+  10.10.100.111: ib-host-12 @host
+  10.10.100.112: ib-host-13 @host
+  10.10.100.113: ib-host-14 @host
+  10.10.100.114: ib-host-15 @host
+  10.10.100.115: ib-host-16 @host
+
+endpoint_hosts:
+  - "ib-host-*"

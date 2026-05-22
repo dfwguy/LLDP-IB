@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Assistant - LLDPq</title>
+    <title>AI Assistant - LLDPq-IB</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <style>
         input:-webkit-autofill,
@@ -166,14 +166,14 @@
 
 <!-- Chat area -->
 <div class="chat-area" id="chatArea">
-    <div class="msg msg-system">Ask about your fabric — device status, BGP, LLDP, topology, troubleshooting, or anything else.</div>
+    <div class="msg msg-system">Ask about your InfiniBand fabric — Subnet Manager, link errors, P_Keys, multicast, SHARP, transceivers, topology, or any specific device.</div>
     <div id="suggestions"></div>
 </div>
 
 <!-- Input area -->
 <div class="input-area">
     <div class="input-wrapper">
-        <textarea id="chatInput" placeholder="Ask about your fabric..." rows="1" onkeydown="handleKeydown(event)" oninput="autoResize(this)"></textarea>
+        <textarea id="chatInput" placeholder="Ask about your IB fabric (SM, link errors, P_Keys, SHARP, transceivers)..." rows="1" onkeydown="handleKeydown(event)" oninput="autoResize(this)"></textarea>
     </div>
     <button id="btnAttachLogs" onclick="toggleAttachLogs()" title="Attach critical/error logs to next message" style="height: 42px; width: 42px; padding: 0; flex-shrink: 0; background: #333; border: 1px solid #555; border-radius: 6px; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 9h-2v3c0 1.1-.9 2-2 2s-2-.9-2-2v-4c0-1.66 1.34-3 3-3s3 1.34 3 3v1zm-3-7V3.5L18.5 9H14c-.55 0-1-.45-1-1V4z"/></svg>
@@ -734,66 +734,73 @@ async function runAnalysis() {
     }
 }
 
-// ===================== PREDEFINED PROMPTS =====================
-// Short labels for chips, full prompt sent to AI
+// ===================== PREDEFINED PROMPTS (IB edition) =====================
+// Short labels for chips, full prompt sent to AI.
 const PROMPT_CATEGORIES = [
     {
         label: 'Health',
         prompts: [
-            { chip: 'Morning health check', full: 'Give me a morning health check — summarize all issues, BGP status, LLDP problems, and any devices that need attention. Rate severity.' },
-            { chip: 'Unreachable devices', full: 'Show all unreachable devices. Are they expected to be down or is this a problem?' },
-            { chip: 'Recent reboots', full: 'Any devices with very short uptime (recently rebooted)? What might have caused it?' },
-            { chip: 'Firmware versions', full: 'List all firmware versions across devices. Are all devices on the same version? Report any inconsistencies.' },
+            { chip: 'Morning health check', full: 'Give me a morning IB fabric health check. Summarize SM status, link error severity, port flaps, mixed transceiver firmware, unreachable switches, and any device that needs attention. Rate severity.' },
+            { chip: 'Unreachable switches', full: 'List all unreachable switches/HCAs from assets.ini. Are they expected to be down (planned maintenance) or is this a problem?' },
+            { chip: 'Mixed firmware', full: 'List MLNX-OS / ConnectX firmware versions across devices. Are any switches on a different version than their peers? Any transceiver models with mixed firmware (flagged in transceiver_inventory.summary.mixed_fw_models)?' },
+            { chip: 'Anything critical?', full: 'List every CRITICAL issue in the fabric right now -- SM lost, multi-Master, critical link errors, hardware failures. Sort by impact.' },
         ]
     },
     {
-        label: 'BGP',
+        label: 'Subnet Manager',
         prompts: [
-            { chip: 'BGP issues', full: 'Any BGP sessions down or not established? Show affected devices, neighbors, and suggested remediation.' },
-            { chip: 'Missing sessions', full: 'Which devices have fewer BGP sessions than their peers of the same role? This could indicate missing connections.' },
-            { chip: 'Zero prefixes', full: 'Are there any devices with BGP sessions established but zero prefixes exchanged? This indicates a policy or config issue.' },
+            { chip: 'Who is Master?', full: 'Which switch is the current Master SM, what is its GUID and LID, how many standby SMs are there, what was the last sweep time, and are there any disagreements?' },
+            { chip: 'SM disagreements', full: 'Are there any SM disagreements (nodes that briefly thought they were Master while another node was actually Master)? Show the timeline and suggest remediation.' },
+            { chip: 'Redundancy', full: 'Does this fabric have SM redundancy (at least one Master + one Standby)? If not, suggest how to enable a standby SM on another switch.' },
         ]
     },
     {
-        label: 'Physical',
+        label: 'Links',
         prompts: [
-            { chip: 'LLDP problems', full: 'List all LLDP problems (Fail status). What do these failures mean?' },
-            { chip: 'Link flaps', full: 'Which devices have link flaps? How many carrier transitions? Suggest troubleshooting steps.' },
-            { chip: 'Bond failures', full: 'Any bonds with missing or down members? This indicates partial LAG failure.' },
-            { chip: 'Optical health', full: 'Any optical transceivers with warnings or critical DOM values (RX/TX power, temperature)? List affected ports.' },
-            { chip: 'Hardware alerts', full: 'Any hardware issues — high temperature, fan failures, PSU problems? List affected devices with sensor values.' },
+            { chip: 'Critical ports', full: 'Show all ports in CRITICAL state (high SymbolErrors, sustained PortRcvErrors, etc.). For each port list device, port id, peer, counter values, and suggested action (clean cable, swap transceiver, swap cable).' },
+            { chip: 'Flapping ports', full: 'Which ports have LinkDownedCounter increments in the last hour? Show device:port + counter delta + the peer hostname. What is the likely root cause?' },
+            { chip: 'Symbol errors', full: 'Which ports have rising SymbolErrorCounter? Group by switch and suggest which links to inspect first.' },
+            { chip: 'Top problem ports', full: 'List the top 10 most problematic IB ports across the fabric, by severity then by counter magnitude. Include the peer device for each.' },
         ]
     },
     {
-        label: 'Logs',
+        label: 'Partitions / QoS',
         prompts: [
-            { chip: 'Critical logs', full: 'Analyze all critical logs — group by category (BGP, hardware, software, kernel) and suggest remediation for each group.' },
-            { chip: 'Recent errors', full: 'What errors occurred in the last monitoring cycle? Summarize by device and error type.' },
+            { chip: 'P_Key inventory', full: 'List every P_Key (partition) defined on this fabric. For each one, give the membership count, type (full/limited), and a one-line description (default / training / storage / etc.).' },
+            { chip: 'P_Key inconsistencies', full: 'Are there any P_Keys that exist on some switches but not on others? Cross-device pkey inconsistencies usually indicate a missed config push.' },
+            { chip: 'QoS profiles', full: 'List the QoS profiles in use. Which switches use which profile? Any device using a non-default profile?' },
         ]
     },
     {
-        label: 'Discovery',
+        label: 'Multicast',
         prompts: [
-            { chip: 'MAC mismatches', full: 'Any MAC mismatches between inventory bindings and discovered devices? This usually means hardware was replaced.' },
-            { chip: 'Not in inventory', full: 'Which discovered devices are not in the inventory yet? Should they be added?' },
+            { chip: 'Multicast groups', full: 'List all IB multicast groups. For each: MGID, MLID, P_Key, member count, and likely usage (IPoIB / NCCL / MPI).' },
+            { chip: 'NCCL/MPI groups', full: 'Identify the multicast groups used by NCCL ring or MPI broadcast on this fabric. What is their member count?' },
         ]
     },
     {
-        label: 'Config',
+        label: 'SHARP',
         prompts: [
-            { chip: 'Config consistency', full: 'Check config consistency across all devices: compare ASN, MTU, VRFs, VLANs, and BGP peer counts for same-role devices. Report any mismatches.' },
-            { chip: 'MTU mismatches', full: 'Check for MTU mismatches across fabric interfaces. All fabric-facing ports should have the same MTU. Report any differences.' },
-            { chip: 'Pending changes', full: 'Are there any devices with pending/uncommitted config changes (Ansible diff)? What changes are waiting?' },
+            { chip: 'Is SHARP enabled?', full: 'Is SHARP aggregation enabled on this fabric? If yes, how many aggregation nodes, how many trees, what version? If no, would it be useful for this topology size?' },
+            { chip: 'SHARP trees', full: 'List the active SHARP aggregation trees: root, member count, payload size. Are all trees rooted on the master SM switch?' },
         ]
     },
     {
-        label: 'Analysis',
+        label: 'Transceivers',
         prompts: [
-            { chip: 'Single points of failure', full: 'Are there any single points of failure in this fabric? What would happen if a spine went down?' },
-            { chip: 'Compare spines', full: 'Compare all spine devices — do they have the same number of BGP sessions and LLDP neighbors? Asymmetry indicates problems.' },
-            { chip: 'Capacity planning', full: 'Based on current device counts, link utilization, and topology, which links or devices are nearing capacity? Any bottlenecks?' },
+            { chip: 'Mixed FW models', full: 'Which transceiver models have more than one firmware version present in the fabric? List affected device:port pairs. How risky is the FW split?' },
+            { chip: 'Inventory summary', full: 'Summarise the transceiver inventory: total modules, unique models, FW versions per model, devices with the most modules.' },
+            { chip: 'Cable status', full: 'Are any transceivers reporting non-ok status (degraded RX power, temperature, link margin)? List the ports.' },
         ]
-    }
+    },
+    {
+        label: 'Topology',
+        prompts: [
+            { chip: 'Describe topology', full: 'Describe the IB fabric topology (count of switches, HCAs, links, speeds). Is it a fat-tree, Clos, or something else?' },
+            { chip: 'Spine-leaf check', full: 'Verify the spine-leaf wiring: does every leaf have a link to every spine? Report any leaf with missing uplinks.' },
+            { chip: 'HCA distribution', full: 'How are HCAs distributed across leaves? Are any leaves over-subscribed or empty?' },
+        ]
+    },
 ];
 
 function getSuggestionsHTML() {

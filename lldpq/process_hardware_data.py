@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""
-Process hardware health data collected by monitor.sh
-Simplified version that uses generate_hardware_html.py
+"""Process hardware health data collected by ib-monitor.sh.
 
-Copyright (c) 2024 LLDPq Project
+The ib-monitor.sh script writes per-switch IB_HARDWARE section output to
+monitor-results/hardware-data/<host>_hardware.txt. This wrapper just makes
+sure the directory exists and then defers to generate_hardware_html.py.
+
+Copyright (c) 2024-2026 LLDPq Project
 Licensed under MIT License - see LICENSE file for details
 """
 
@@ -22,7 +24,7 @@ def main():
     
     if not os.path.exists(data_dir):
         print(f"❌ Data directory not found: {data_dir}")
-        print("💡 Run monitor.sh first to collect data")
+        print("💡 Run ib-monitor.sh first to collect data")
         sys.exit(1)
     
     # Check for hardware data files  
@@ -55,11 +57,9 @@ def main():
     print(f"[{datetime.now()}] Hardware data processing completed")
     
     if processed_count == 0:
-        print("\n💡 To enable hardware monitoring:")
-        print("   1. Hardware data collection is not yet added to monitor.sh")
-        print("   2. This will be added in the next step")
-        print("   3. After updating monitor.sh, run it to collect hardware data")
-        print("   4. Then run this script again to generate hardware analysis")
+        print("\n💡 No hardware data yet — run ib-monitor.sh once. The "
+              "IB_HARDWARE marker section in ib-monitor.sh populates the "
+              "hardware-data/ directory consumed here.")
 
 
 if __name__ == "__main__":

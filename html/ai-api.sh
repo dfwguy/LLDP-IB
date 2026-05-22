@@ -13,8 +13,12 @@ LLDPQ_USER="${LLDPQ_USER:-lldpq}"
 WEB_ROOT="${WEB_ROOT:-/var/www/html}"
 
 # AI config
-AI_PROVIDER="${AI_PROVIDER:-ollama}"
-AI_MODEL="${AI_MODEL:-llama3.2}"
+# AI is DISABLED by default in the IB edition: the operator opts in by
+# setting AI_PROVIDER + AI_MODEL (+ AI_API_KEY for cloud providers, or
+# OLLAMA_URL for a local Ollama). Until then the chat UI returns a clear
+# "AI provider not configured" message instead of guessing.
+AI_PROVIDER="${AI_PROVIDER:-}"
+AI_MODEL="${AI_MODEL:-}"
 AI_API_KEY="${AI_API_KEY:-}"
 AI_API_URL="${AI_API_URL:-https://api.openai.com/v1}"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
@@ -59,8 +63,8 @@ POST_DATA = os.environ.get('POST_DATA', '')
 LLDPQ_DIR = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
 LLDPQ_USER = os.environ.get('LLDPQ_USER', 'lldpq')
 WEB_ROOT = os.environ.get('WEB_ROOT', '/var/www/html')
-AI_PROVIDER = os.environ.get('AI_PROVIDER', 'ollama')
-AI_MODEL = os.environ.get('AI_MODEL', 'llama3.2')
+AI_PROVIDER = os.environ.get('AI_PROVIDER', '')
+AI_MODEL = os.environ.get('AI_MODEL', '')
 AI_API_KEY = os.environ.get('AI_API_KEY', '')
 AI_API_URL = os.environ.get('AI_API_URL', 'https://api.openai.com/v1')
 OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
@@ -87,20 +91,42 @@ def sse_event(data, event=None):
     sys.stdout.write(f"data: {json.dumps(data)}\n\n")
     sys.stdout.flush()
 
-# ======================== CONTEXT BUILDER ========================
+# ======================== CONTEXT BUILDER (IB edition) ========================
+# Reads the IB JSON outputs produced by `process_ib_*.py` and the local
+# `assets.ini`. Everything is read-only; nothing is mutated.
+
+MONITOR_RESULTS_DIR = os.path.join(LLDPQ_DIR, 'monitor-results')
+
+
+def _load_json_safe(name):
+    """Load <name> from monitor-results/, fall back to /var/www/html/monitor-results/."""
+    for base in (MONITOR_RESULTS_DIR, os.path.join(WEB_ROOT, 'monitor-results')):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    return json.load(f)
+            except Exception:
+                return None
+    return None
+
 
 def build_fabric_summary():
-    """Build a structured fabric summary from all LLDPq data sources."""
+    """Compact IB fabric summary -- one line per system, plus headline
+    counts the LLM can quote without hallucinating.
+
+    Returns: (summary_text, devices_dict, device_health_dict)
+    """
     summary = []
-    
-    # 1. Device inventory
+
+    # 1. Device inventory from devices.yaml
     devices = {}
     roles = {}
     try:
         devices_file = os.path.join(LLDPQ_DIR, 'devices.yaml')
         if os.path.exists(devices_file):
             import yaml
-            with open(devices_file, 'r') as f:
+            with open(devices_file) as f:
                 data = yaml.safe_load(f) or {}
             section = data.get('devices', data)
             if isinstance(section, dict):
@@ -121,495 +147,394 @@ def build_fabric_summary():
                     roles[role] = roles.get(role, 0) + 1
     except Exception:
         pass
-    
+
     role_summary = ', '.join(f"{count} {role}" for role, count in sorted(roles.items(), key=lambda x: -x[1]))
-    summary.append(f"DEVICE INVENTORY: {len(devices)} devices ({role_summary})")
-    
-    # 2. Device cache (health info)
+    summary.append(f"DEVICE INVENTORY: {len(devices)} devices ({role_summary or 'no roles declared'})")
+
+    # 2. Reachability from assets.ini (last col 1=reachable)
     device_health = {}
-    try:
-        cache_file = os.path.join(WEB_ROOT, 'device-cache.json')
-        if os.path.exists(cache_file):
-            with open(cache_file, 'r') as f:
-                cache = json.load(f)
-            if isinstance(cache, dict):
-                for hostname, info in cache.items():
-                    if isinstance(info, dict):
-                        device_health[hostname] = {
-                            'ip': info.get('ip', ''),
-                            'mac': info.get('mac', ''),
-                            'release': info.get('release', ''),
-                            'uptime': info.get('uptime', ''),
-                            'model': info.get('model', ''),
-                            'status': info.get('status', ''),
-                            'last_seen': info.get('last_seen', ''),
-                        }
-    except Exception:
-        pass
-    
-    online = sum(1 for d in device_health.values() if d.get('status') == 'ok')
-    summary.append(f"HEALTH: {online}/{len(device_health)} devices responding")
-    
-    # 3. LLDP status
-    lldp_problems = 0
-    lldp_total = 0
-    try:
-        lldp_file = os.path.join(WEB_ROOT, 'lldp_results.ini')
-        if os.path.exists(lldp_file):
-            with open(lldp_file, 'r') as f:
-                for line in f:
-                    if 'Pass' in line or 'Fail' in line or 'No-Info' in line:
-                        lldp_total += 1
-                    if 'Fail' in line:
-                        lldp_problems += 1
-    except Exception:
-        pass
-    
-    problems_file = os.path.join(WEB_ROOT, 'problems-lldp_results.ini')
-    problem_details = []
-    try:
-        if os.path.exists(problems_file):
-            with open(problems_file, 'r') as f:
+    reachable = 0
+    for base in (LLDPQ_DIR, WEB_ROOT):
+        ai_path = os.path.join(base, 'assets.ini')
+        if not os.path.exists(ai_path):
+            continue
+        try:
+            with open(ai_path) as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#') and not line.startswith('['):
-                        problem_details.append(line)
-    except Exception:
-        pass
-    
-    summary.append(f"LLDP: {lldp_total} links checked, {lldp_problems} problems")
-    if problem_details:
-        summary.append(f"LLDP PROBLEMS:\n" + '\n'.join(problem_details[:20]))
-    
-    # 4. BGP history
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        host = parts[0]
+                        status = parts[-1].strip()
+                        device_health[host] = {
+                            'ip':       parts[1] if len(parts) > 1 else '',
+                            'model':    parts[2] if len(parts) > 2 else '',
+                            'serial':   parts[3] if len(parts) > 3 else '',
+                            'release':  parts[4] if len(parts) > 4 else '',
+                            'status':   'ok' if status == '1' else 'unreachable',
+                        }
+                        if status == '1':
+                            reachable += 1
+            break
+        except Exception:
+            pass
+    summary.append(f"REACHABILITY: {reachable}/{len(device_health)} switches/HCAs responding (assets.ini)")
+
+    # 3. Subnet Manager
+    sm = _load_json_safe('ib_sm_status.json')
+    if sm:
+        s = sm.get('summary', {})
+        master_host = sm.get('master_hostname') or 'unknown'
+        master_guid = sm.get('master_guid', '')
+        sms = sm.get('sms', [])
+        summary.append(
+            f"SUBNET MANAGER: master={master_host} ({master_guid[:18] + '…' if len(master_guid) > 22 else master_guid}), "
+            f"standby={s.get('standby_count', 0)}, "
+            f"disagreements={s.get('disagreement_count', len(sm.get('disagreements', [])))}, "
+            f"last_sweep={sm.get('last_sweep_seconds', '?')}s, "
+            f"total_sms={len(sms)}"
+        )
+        for d in (sm.get('disagreements') or [])[:3]:
+            summary.append(f"  SM DISAGREEMENT: {d.get('node', '?')} claimed {d.get('claimed_master', '?')[:18]}… vs actual {d.get('actual_master', '?')[:18]}…")
+
+    # 4. Topology
+    topo = _load_json_safe('ib_topology.json')
+    if topo:
+        s = topo.get('summary', {})
+        speeds = ', '.join(f"{v}x {k}" for k, v in (s.get('speed_distribution') or {}).items())
+        summary.append(
+            f"TOPOLOGY: {s.get('total_nodes', 0)} nodes "
+            f"({s.get('switches', 0)} switches, {s.get('hcas', 0)} HCAs, {s.get('routers', 0)} routers), "
+            f"{s.get('total_links', 0)} links [{speeds or 'unknown speed'}]"
+        )
+
+    # 5. Link errors
+    le = _load_json_safe('ib_link_errors.json')
+    if le:
+        s = le.get('summary', {})
+        crit = s.get('critical', s.get('critical_count', 0))
+        warn = s.get('warning', s.get('warning_count', 0))
+        flap = s.get('flapping', s.get('flapping_1h', 0))
+        summary.append(
+            f"IB LINK HEALTH: {s.get('healthy', 0)}/{s.get('total_ports', 0)} healthy, "
+            f"{crit} CRITICAL, {warn} WARNING, {flap} flapping in last 1h"
+        )
+        for p in (le.get('problem_ports') or [])[:5]:
+            summary.append(
+                f"  {p.get('severity', '?').upper()}: {p.get('device', '?')}:{p.get('port', '?')} "
+                f"(peer={p.get('peer', '?')}) "
+                f"symbol_err={p.get('symbol_errors', 0)} link_down={p.get('link_downed', 0)} "
+                f"rcv_err={p.get('rcv_errors', 0)} -- {p.get('note', '')}"
+            )
+
+    # 6. P_Keys (IB partitions)
+    pk = _load_json_safe('ib_pkey.json')
+    if pk:
+        s = pk.get('summary', {})
+        partitions = pk.get('pkeys') or {}
+        summary.append(
+            f"P_KEYS: {s.get('partition_count', len(partitions))} partitions, "
+            f"{s.get('inconsistency_count', 0)} cross-device inconsistencies"
+        )
+        for name, info in list(partitions.items())[:5]:
+            summary.append(f"  pkey {name}: {info.get('name', '')} ({info.get('member_count', 0)} members, {info.get('type', '')})")
+
+    # 7. Multicast
+    mc = _load_json_safe('ib_multicast.json')
+    if mc:
+        s = mc.get('summary', {})
+        summary.append(f"MULTICAST: {s.get('group_count', 0)} IB MC groups")
+        for g in (mc.get('groups') or [])[:5]:
+            summary.append(f"  mlid {g.get('mlid', '?')} pkey {g.get('pkey', '?')} members={g.get('members', '?')} {g.get('kind', '')}")
+
+    # 8. QoS
+    qos = _load_json_safe('ib_qos.json')
+    if qos:
+        s = qos.get('summary', {})
+        summary.append(f"QOS: {s.get('profile_count', 0)} profiles, {s.get('inconsistency_count', 0)} inconsistencies")
+        for prof in (qos.get('profiles') or [])[:3]:
+            summary.append(f"  profile {prof.get('name', '?')} applied on {len(prof.get('applied_on', []))} devices")
+
+    # 9. SHARP
+    sh = _load_json_safe('ib_sharp_status.json')
+    if sh and sh.get('enabled'):
+        s = sh.get('summary', {})
+        summary.append(
+            f"SHARP: ENABLED, version {sh.get('version', '?')}, "
+            f"{s.get('node_count', 0)} aggregation nodes, "
+            f"{s.get('tree_count', len(sh.get('trees', [])))} trees"
+        )
+    elif sh is not None:
+        summary.append("SHARP: not enabled on this fabric")
+
+    # 10. Transceivers
+    tr = _load_json_safe('transceiver_inventory.json')
+    if tr:
+        s = tr.get('summary', {})
+        mixed = s.get('mixed_fw_models') or []
+        summary.append(
+            f"TRANSCEIVERS: {s.get('modules_count', s.get('total_modules', 0))} modules, "
+            f"{s.get('unique_models', 0)} models, "
+            f"mixed-FW: {', '.join(mixed) if mixed else 'none'}"
+        )
+
+    # 11. Logs
+    logs = _load_json_safe('log_summary.json')
+    if logs:
+        summary.append(
+            f"LOGS: {logs.get('critical', 0)} critical, {logs.get('error', 0)} errors, "
+            f"{logs.get('warning', 0)} warnings, {logs.get('info', 0)} info"
+        )
+        for m in (logs.get('top_messages') or [])[:3]:
+            summary.append(f"  {m.get('severity', '?').upper()} {m.get('device', '?')} x{m.get('count', '?')}: {m.get('sample', '')}")
+
+    # 12. UFM (if reachable)
     try:
-        bgp_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'bgp_history.json')
-        if os.path.exists(bgp_file):
-            with open(bgp_file, 'r') as f:
-                bgp = json.load(f)
-            total_sessions = 0
-            down_sessions = []
-            for device, neighbors in bgp.items():
-                if isinstance(neighbors, dict):
-                    for neighbor, info in neighbors.items():
-                        if isinstance(info, dict):
-                            total_sessions += 1
-                            state = info.get('state', '')
-                            if state and state.lower() != 'established':
-                                down_sessions.append(f"{device} → {neighbor}: {state}")
-            summary.append(f"BGP: {total_sessions} sessions, {len(down_sessions)} not established")
-            if down_sessions:
-                summary.append("BGP ISSUES:\n" + '\n'.join(down_sessions[:10]))
+        ufm_url = os.environ.get('UFM_URL', '')
+        if ufm_url:
+            summary.append(f"UFM: integration configured at {ufm_url}")
     except Exception:
         pass
-    
-    # 5. Log summary (totals + per-device critical breakdown)
-    try:
-        log_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'log_summary.json')
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                logs = json.load(f)
-            critical = sum(d.get('critical', 0) for d in logs.values() if isinstance(d, dict))
-            errors = sum(d.get('error', 0) for d in logs.values() if isinstance(d, dict))
-            warnings = sum(d.get('warning', 0) for d in logs.values() if isinstance(d, dict))
-            if critical or errors or warnings:
-                summary.append(f"LOGS: {critical} critical, {errors} errors, {warnings} warnings across all devices")
-            if critical > 0:
-                crit_devices = []
-                device_counts = logs.get('device_counts', logs)
-                for dev, counts in sorted(device_counts.items()):
-                    if isinstance(counts, dict) and counts.get('critical', 0) > 0:
-                        crit_devices.append(f"  {dev}: {counts['critical']} critical")
-                if crit_devices:
-                    summary.append("CRITICAL LOG DEVICES:\n" + "\n".join(crit_devices[:20]))
-            
-            recent = logs.get('recent_messages', {})
-            if recent:
-                log_lines = []
-                for dev in sorted(recent.keys())[:5]:
-                    for msg in recent[dev][:2]:
-                        log_lines.append(f"  {dev}: {msg}")
-                if log_lines:
-                    summary.append("LOG SAMPLES (top 5 devices, use Attach Logs button for full detail):\n" + "\n".join(log_lines))
-    except Exception:
-        pass
-    
-    # 6. Discovery status
-    try:
-        disc_file = os.path.join(WEB_ROOT, 'discovery-cache.json')
-        if os.path.exists(disc_file):
-            with open(disc_file, 'r') as f:
-                disc = json.load(f)
-            entries = disc.get('entries', [])
-            provisioned = sum(1 for e in entries if e.get('device_type') == 'provisioned')
-            not_prov = sum(1 for e in entries if e.get('device_type') == 'not_provisioned')
-            unreachable = sum(1 for e in entries if e.get('device_type') == 'unreachable')
-            other = sum(1 for e in entries if e.get('device_type') == 'other')
-            mismatches = sum(1 for e in entries if e.get('mac_status') == 'mismatch')
-            age = int(time.time() - disc.get('timestamp', 0))
-            age_str = f"{age//60}m ago" if age < 3600 else f"{age//3600}h ago"
-            summary.append(f"DISCOVERY ({age_str}): {provisioned} provisioned, {not_prov} no-key, {unreachable} unreachable, {other} other")
-            if mismatches:
-                summary.append(f"  MAC MISMATCHES: {mismatches}")
-    except Exception:
-        pass
-    
-    # 7. Fabric tables summary
-    try:
-        tables_dir = os.path.join(LLDPQ_DIR, 'monitor-results', 'fabric-tables')
-        summary_file = os.path.join(tables_dir, 'summary.json')
-        if os.path.exists(summary_file):
-            with open(summary_file, 'r') as f:
-                fsummary = json.load(f)
-            arp_count = fsummary.get('arp_count', 0)
-            mac_count = fsummary.get('mac_count', 0)
-            vtep_count = fsummary.get('vtep_count', 0)
-            summary.append(f"FABRIC TABLES: {arp_count} ARP entries, {mac_count} MAC entries, {vtep_count} VTEPs")
-    except Exception:
-        pass
-    
+
     return '\n'.join(summary), devices, device_health
 
 
 def build_device_detail(hostname, devices, device_health):
-    """Build detailed info for a specific device."""
+    """Build IB-specific detail for one device: identity, GUID/LID,
+    links to/from in topology, any link-error problem ports, P_Key membership."""
     detail = []
     ip = ''
-    
-    # Find IP from devices dict
     for dev_ip, dev_info in devices.items():
         if dev_info['hostname'] == hostname or dev_ip == hostname:
             ip = dev_ip
             hostname = dev_info['hostname']
             detail.append(f"DEVICE: {hostname} ({ip}) role={dev_info['role']}")
             break
-    
+
     if not ip:
         return f"Device '{hostname}' not found in inventory."
-    
-    # Health info
+
+    # assets.ini-driven identity
     health = device_health.get(hostname, {})
     if health:
-        detail.append(f"  Model: {health.get('model', '?')}, Release: {health.get('release', '?')}, Uptime: {health.get('uptime', '?')}")
-        detail.append(f"  MAC: {health.get('mac', '?')}, Status: {health.get('status', '?')}, Last seen: {health.get('last_seen', '?')}")
-    
-    # Fabric table for this device
-    try:
-        table_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'fabric-tables', f'{hostname}.json')
-        if os.path.exists(table_file):
-            with open(table_file, 'r') as f:
-                table = json.load(f)
-            arp = table.get('arp', [])
-            mac = table.get('mac', [])
-            lldp = table.get('lldp', [])
-            bonds = table.get('bonds', [])
-            routes = table.get('routes', [])
-            detail.append(f"  ARP: {len(arp)} entries, MAC: {len(mac)} entries, LLDP neighbors: {len(lldp)}")
-            if lldp:
-                detail.append("  LLDP NEIGHBORS:")
-                for n in lldp[:20]:
-                    detail.append(f"    {n.get('local_port', '?')} → {n.get('neighbor', '?')} ({n.get('neighbor_port', '?')})")
-            if bonds:
-                detail.append(f"  BONDS: {len(bonds)}")
-            if routes:
-                detail.append(f"  ROUTES: {len(routes)} entries")
-    except Exception:
-        pass
-    
-    # BGP for this device
-    try:
-        bgp_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'bgp_history.json')
-        if os.path.exists(bgp_file):
-            with open(bgp_file, 'r') as f:
-                bgp = json.load(f)
-            dev_bgp = bgp.get(hostname, {})
-            if dev_bgp:
-                detail.append(f"  BGP NEIGHBORS: {len(dev_bgp)}")
-                for neighbor, info in list(dev_bgp.items())[:20]:
-                    if isinstance(info, dict):
-                        state = info.get('state', '?')
-                        pfx = info.get('prefixes', '?')
-                        detail.append(f"    {neighbor}: {state} (prefixes: {pfx})")
-    except Exception:
-        pass
-    
+        detail.append(
+            f"  Model: {health.get('model', '?')}, FW: {health.get('release', '?')}, "
+            f"Serial: {health.get('serial', '?')}, Status: {health.get('status', '?')}"
+        )
+
+    # Topology — GUID/LID + per-link neighbors
+    topo = _load_json_safe('ib_topology.json')
+    if topo:
+        node = next((n for n in topo.get('nodes', []) if n.get('hostname') == hostname), None)
+        if node:
+            detail.append(f"  GUID: {node.get('guid', '?')}, LID: {node.get('lid', '?')}, type: {node.get('type', '?')}")
+        links = topo.get('links', [])
+        local_links = [l for l in links if l.get('src') == hostname or l.get('dst') == hostname]
+        if local_links:
+            detail.append(f"  IB LINKS ({len(local_links)}):")
+            for l in local_links[:25]:
+                if l.get('src') == hostname:
+                    detail.append(f"    {l.get('src_port', '?')} -> {l.get('dst', '?')}:{l.get('dst_port', '?')} ({l.get('speed', '')})")
+                else:
+                    detail.append(f"    {l.get('dst_port', '?')} <- {l.get('src', '?')}:{l.get('src_port', '?')} ({l.get('speed', '')})")
+
+    # Problem ports on this device
+    le = _load_json_safe('ib_link_errors.json')
+    if le:
+        local_problems = [p for p in (le.get('problem_ports') or []) if p.get('device') == hostname]
+        if local_problems:
+            detail.append(f"  PROBLEM PORTS ON THIS DEVICE: {len(local_problems)}")
+            for p in local_problems[:10]:
+                detail.append(
+                    f"    {p.get('severity', '?').upper()} {p.get('port', '?')} "
+                    f"symbol_err={p.get('symbol_errors', 0)} link_down={p.get('link_downed', 0)} "
+                    f"rcv_err={p.get('rcv_errors', 0)} -- {p.get('note', '')}"
+                )
+
+    # P_Key membership (which partitions this device belongs to)
+    pk = _load_json_safe('ib_pkey.json')
+    if pk:
+        per_device = pk.get('per_device') or {}
+        member_pkeys = per_device.get(hostname, [])
+        if member_pkeys:
+            detail.append(f"  P_KEY MEMBERSHIP: {', '.join(member_pkeys)}")
+
     return '\n'.join(detail) if detail else f"Device '{hostname}' found but no detailed data available."
 
 
 def build_context_for_question(question, devices, device_health):
-    """Build targeted context based on the question content."""
+    """Build IB-specific extra context based on keywords in the question."""
     extra_context = []
     q_lower = question.lower()
-    
-    # Detect specific device mentions
+
+    # Specific device mentions -> include full device detail
     for ip, dev in devices.items():
         if dev['hostname'].lower() in q_lower or ip in q_lower:
             extra_context.append(build_device_detail(dev['hostname'], devices, device_health))
-    
-    # Keyword-based enrichment
-    if any(kw in q_lower for kw in ['flap', 'down', 'carrier', 'link down']):
-        try:
-            flap_dir = os.path.join(LLDPQ_DIR, 'monitor-results', 'flap-data')
-            if os.path.isdir(flap_dir):
-                flaps = []
-                for f in sorted(glob.glob(os.path.join(flap_dir, '*.txt')))[-10:]:
-                    with open(f, 'r') as fh:
-                        content = fh.read().strip()
-                        if content:
-                            flaps.append(f"--- {os.path.basename(f)} ---\n{content[:500]}")
-                if flaps:
-                    extra_context.append("LINK FLAP DATA:\n" + '\n'.join(flaps))
-        except Exception:
-            pass
-    
-    if any(kw in q_lower for kw in ['vlan', 'vxlan', 'evpn']):
-        try:
-            for profile_name in ['vlan_profiles.yaml', 'sw_port_profiles.yaml']:
-                for root in [os.path.join(LLDPQ_DIR, '..'), '/var/www']:
-                    for dirpath, dirnames, filenames in os.walk(root):
-                        if profile_name in filenames:
-                            filepath = os.path.join(dirpath, profile_name)
-                            with open(filepath, 'r') as f:
-                                content = f.read()[:2000]
-                            extra_context.append(f"{profile_name}:\n{content}")
-                            break
-        except Exception:
-            pass
-    
-    if any(kw in q_lower for kw in ['topology', 'connection', 'cable', 'wiring', 'link']):
-        try:
-            topo_file = os.path.join(WEB_ROOT, 'topology.dot')
-            if os.path.exists(topo_file):
-                with open(topo_file, 'r') as f:
-                    content = f.read()[:3000]
-                extra_context.append(f"TOPOLOGY (DOT):\n{content}")
-        except Exception:
-            pass
-    
-    # Config check: load Ansible host_vars + group_vars for config consistency analysis
-    if any(kw in q_lower for kw in ['config', 'consistency', 'check', 'asn', 'mtu', 'mismatch', 'validate', 'audit', 'compare', 'bgp config', 'vlan config']):
-        extra_context.append(build_config_context(devices))
-    
+
+    # Topology questions -> include the DOT graph
+    if any(kw in q_lower for kw in ['topolog', 'connection', 'cable', 'wiring',
+                                    'fat-tree', 'fat tree', 'fabric layout']):
+        for base in (WEB_ROOT, LLDPQ_DIR):
+            topo_dot = os.path.join(base, 'topology.dot')
+            if os.path.exists(topo_dot):
+                try:
+                    with open(topo_dot) as f:
+                        extra_context.append(f"TOPOLOGY (DOT):\n{f.read()[:3000]}")
+                    break
+                except Exception:
+                    pass
+
+    # SM / master / standby questions -> include full ib_sm_status.json
+    if any(kw in q_lower for kw in ['sm ', 'subnet manager', 'master', 'standby',
+                                    'opensm', 'sminfo']):
+        sm = _load_json_safe('ib_sm_status.json')
+        if sm:
+            extra_context.append("FULL SM STATUS JSON:\n" + json.dumps(sm, indent=2)[:3000])
+
+    # Link / flap / error questions -> include full ib_link_errors.json
+    if any(kw in q_lower for kw in ['flap', 'down', 'link error', 'symbol error',
+                                    'rcv error', 'critical port', 'warning port',
+                                    'perfquery', 'iblinkinfo']):
+        le = _load_json_safe('ib_link_errors.json')
+        if le:
+            extra_context.append("FULL LINK ERROR JSON:\n" + json.dumps(le, indent=2)[:3000])
+
+    # P_Key questions
+    if any(kw in q_lower for kw in ['pkey', 'p_key', 'p key', 'partition']):
+        pk = _load_json_safe('ib_pkey.json')
+        if pk:
+            extra_context.append("FULL P_KEY JSON:\n" + json.dumps(pk, indent=2)[:3000])
+
+    # Multicast questions
+    if any(kw in q_lower for kw in ['multicast', 'mcast', 'mlid', 'ipoib', 'mgid',
+                                    'nccl ring', 'mpi broadcast']):
+        mc = _load_json_safe('ib_multicast.json')
+        if mc:
+            extra_context.append("FULL MULTICAST JSON:\n" + json.dumps(mc, indent=2)[:2500])
+
+    # QoS / SL / VL
+    if any(kw in q_lower for kw in ['qos', 'service level', 'sl ', 'vl ', 'sl-vl']):
+        qos = _load_json_safe('ib_qos.json')
+        if qos:
+            extra_context.append("FULL QOS JSON:\n" + json.dumps(qos, indent=2)[:2500])
+
+    # SHARP
+    if any(kw in q_lower for kw in ['sharp', 'aggregation', 'reduction', 'nccl tree']):
+        sh = _load_json_safe('ib_sharp_status.json')
+        if sh:
+            extra_context.append("FULL SHARP JSON:\n" + json.dumps(sh, indent=2)[:2500])
+
+    # Transceiver / firmware / cable
+    if any(kw in q_lower for kw in ['transceiver', 'optic', 'firmware', 'fw version',
+                                    'mlxlink', 'cable', 'cmis', 'osfp']):
+        tr = _load_json_safe('transceiver_inventory.json')
+        if tr:
+            # full inventory can be huge -- summary + first 30 modules
+            summary = tr.get('summary', {})
+            modules = tr.get('modules', [])[:30]
+            extra_context.append(
+                "TRANSCEIVER INVENTORY (summary + first 30 modules):\n"
+                + json.dumps({'summary': summary, 'modules': modules}, indent=2)[:3500]
+            )
+
+    # UFM
+    if 'ufm' in q_lower:
+        url = os.environ.get('UFM_URL', '')
+        extra_context.append(f"UFM CONFIG: URL={url or 'not set'}, "
+                             f"TOKEN={'set' if os.environ.get('UFM_TOKEN') else 'unset'}, "
+                             f"TLS_VERIFY={os.environ.get('UFM_VERIFY_TLS', 'false')}")
+
     return '\n\n'.join(extra_context)
 
 
-def build_config_context(devices):
-    """Load Ansible config data for consistency checking."""
-    import subprocess
-    lines = []
-    
-    # Find Ansible dir from lldpq.conf
-    ansible_dir = ''
-    try:
-        with open('/etc/lldpq.conf', 'r') as f:
-            for line in f:
-                if line.startswith('ANSIBLE_DIR='):
-                    ansible_dir = line.strip().split('=', 1)[1]
-                    break
-    except Exception:
-        pass
-    
-    if not ansible_dir or ansible_dir == 'NoNe' or not os.path.isdir(ansible_dir):
-        return "CONFIG DATA: No Ansible directory configured. Cannot check config consistency."
-    
-    host_vars_dir = os.path.join(ansible_dir, 'inventory', 'host_vars')
-    group_vars_dir = os.path.join(ansible_dir, 'inventory', 'group_vars', 'all')
-    
-    # 1. Load group_vars (shared config: VLANs, port profiles, BGP profiles)
-    for profile in ['vlan_profiles.yaml', 'sw_port_profiles.yaml', 'bgp_profiles.yaml']:
-        filepath = os.path.join(group_vars_dir, profile)
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, 'r') as f:
-                    content = f.read()[:2000]
-                lines.append(f"--- {profile} (shared config) ---\n{content}")
-            except Exception:
-                pass
-    
-    # 2. Load host_vars for each device (per-device config)
-    # Extract key fields: BGP ASN, interfaces, MTU, VRFs, bonds, EVPN
-    device_configs = {}
-    if os.path.isdir(host_vars_dir):
-        for fname in sorted(os.listdir(host_vars_dir)):
-            if not fname.endswith('.yaml') and not fname.endswith('.yml'):
-                continue
-            hostname = fname.rsplit('.', 1)[0]
-            filepath = os.path.join(host_vars_dir, fname)
-            try:
-                import yaml
-                with open(filepath, 'r') as f:
-                    cfg = yaml.safe_load(f) or {}
-                
-                # Extract key config fields for comparison
-                summary = {}
-                if 'bgp' in cfg:
-                    bgp = cfg['bgp']
-                    summary['asn'] = bgp.get('asn', '?')
-                    summary['router_id'] = bgp.get('router_id', '?')
-                    neighbors = bgp.get('neighbors', {})
-                    summary['bgp_neighbors'] = len(neighbors) if isinstance(neighbors, dict) else 0
-                
-                if 'interfaces' in cfg:
-                    ifaces = cfg['interfaces']
-                    mtus = set()
-                    for iface_name, iface_cfg in ifaces.items() if isinstance(ifaces, dict) else []:
-                        if isinstance(iface_cfg, dict):
-                            mtu = iface_cfg.get('mtu')
-                            if mtu:
-                                mtus.add(str(mtu))
-                    if mtus:
-                        summary['mtus'] = list(mtus)
-                
-                if 'vrfs' in cfg:
-                    summary['vrfs'] = list(cfg['vrfs'].keys()) if isinstance(cfg['vrfs'], dict) else []
-                
-                if 'bonds' in cfg:
-                    summary['bonds'] = list(cfg['bonds'].keys()) if isinstance(cfg['bonds'], dict) else []
-                
-                if 'vlans' in cfg:
-                    summary['vlans'] = list(cfg['vlans'].keys()) if isinstance(cfg['vlans'], dict) else []
-                
-                if 'evpn' in cfg:
-                    summary['evpn'] = True
-                
-                if summary:
-                    device_configs[hostname] = summary
-            except Exception:
-                pass
-    
-    if device_configs:
-        lines.append("\n--- PER-DEVICE CONFIG SUMMARY (from Ansible host_vars) ---")
-        # Group by role for easier comparison
-        role_map = {d['hostname']: d['role'] for d in devices.values()}
-        by_role = {}
-        for hostname, cfg in sorted(device_configs.items()):
-            role = role_map.get(hostname, 'unknown')
-            by_role.setdefault(role, []).append((hostname, cfg))
-        
-        for role, devs in sorted(by_role.items()):
-            lines.append(f"\n[{role}] ({len(devs)} devices)")
-            for hostname, cfg in devs:
-                parts = [f"  {hostname}:"]
-                if 'asn' in cfg: parts.append(f"ASN={cfg['asn']}")
-                if 'router_id' in cfg: parts.append(f"RID={cfg['router_id']}")
-                if 'bgp_neighbors' in cfg: parts.append(f"BGP_peers={cfg['bgp_neighbors']}")
-                if 'mtus' in cfg: parts.append(f"MTUs={cfg['mtus']}")
-                if 'vrfs' in cfg: parts.append(f"VRFs={cfg['vrfs']}")
-                if 'bonds' in cfg: parts.append(f"bonds={cfg['bonds']}")
-                if 'vlans' in cfg: parts.append(f"vlans={len(cfg['vlans'])} VLANs")
-                if 'evpn' in cfg: parts.append("EVPN=yes")
-                lines.append(' '.join(parts))
-    
-    # 3. Pending config changes (from fabric-scan-cache)
-    try:
-        cache_file = os.path.join(WEB_ROOT, 'fabric-scan-cache.json')
-        if os.path.exists(cache_file):
-            with open(cache_file, 'r') as f:
-                cache = json.load(f)
-            pending = cache.get('pendingDevices', [])
-            if pending:
-                lines.append(f"\n--- PENDING CONFIG CHANGES (Ansible diff) ---")
-                lines.append(f"{len(pending)} devices have uncommitted changes: {', '.join(pending[:20])}")
-    except Exception:
-        pass
-    
-    return "CONFIG CONSISTENCY DATA:\n" + '\n'.join(lines) if lines else "CONFIG DATA: No Ansible config files found."
-
-
 def build_device_list(devices, device_health):
-    """Build token-optimized device list: full detail for problems, summary for healthy.
-    This saves ~80% tokens for large fabrics while preserving all actionable info."""
-    
-    problems = []   # devices with issues — full detail
-    healthy_by_role = {}  # role → count of healthy devices
-    
+    """Token-economical device list for the LLM context: full detail for any
+    device with a problem (unreachable, or has a problem port), one-line
+    summary per role for the rest. Saves ~80% tokens on large fabrics."""
+
+    # Pre-fetch IB link errors so we can tag affected devices
+    le = _load_json_safe('ib_link_errors.json') or {}
+    problem_ports = le.get('problem_ports') or []
+    error_devices = {}  # hostname -> [severity, severity, ...]
+    for p in problem_ports:
+        error_devices.setdefault(p.get('device', ''), []).append(p.get('severity', '?'))
+
+    problems = []
+    healthy_by_role = {}
+
     for ip, dev in sorted(devices.items(), key=lambda x: x[1]['hostname']):
         h = device_health.get(dev['hostname'], {})
         status = h.get('status', 'unknown')
-        uptime = h.get('uptime', '?')
-        release = h.get('release', '?')
         role = dev['role']
-        
-        # Determine if device has issues
+
         has_problem = False
         issue_tags = []
-        
-        # Not responding
-        if status != 'ok':
+
+        if status not in ('ok', 'unknown'):
             has_problem = True
             issue_tags.append(f"STATUS:{status}")
-        
-        # Very short uptime (recent reboot) — under 1 hour
-        if uptime and uptime != '?' and ('min' in str(uptime) or uptime.startswith('0:')):
+
+        if dev['hostname'] in error_devices:
+            sev_counts = {}
+            for s in error_devices[dev['hostname']]:
+                sev_counts[s] = sev_counts.get(s, 0) + 1
+            sev_str = ', '.join(f"{c} {s}" for s, c in sev_counts.items())
             has_problem = True
-            issue_tags.append(f"RECENT_REBOOT:uptime={uptime}")
-        
+            issue_tags.append(f"LINK_ERRORS:{sev_str}")
+
         if has_problem:
             tags = ' '.join(issue_tags)
-            problems.append(f"  {dev['hostname']} ({ip}) role={role} {tags} release={release} uptime={uptime}")
+            problems.append(
+                f"  {dev['hostname']} ({ip}) role={role} "
+                f"model={h.get('model', '?')} fw={h.get('release', '?')} {tags}"
+            )
         else:
             healthy_by_role[role] = healthy_by_role.get(role, 0) + 1
-    
-    # Check BGP issues
-    try:
-        bgp_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'bgp_history.json')
-        if os.path.exists(bgp_file):
-            with open(bgp_file, 'r') as f:
-                bgp = json.load(f)
-            for device_name, neighbors in bgp.items():
-                if isinstance(neighbors, dict):
-                    down_count = sum(1 for n in neighbors.values() if isinstance(n, dict) and n.get('state', '').lower() != 'established')
-                    if down_count > 0:
-                        # Find this device in our list
-                        dev_entry = next((f"  {d['hostname']} ({ip})" for ip, d in devices.items() if d['hostname'] == device_name), None)
-                        if dev_entry:
-                            bgp_line = f"{dev_entry} BGP_DOWN:{down_count}_sessions"
-                            # Add if not already in problems
-                            if not any(device_name in p for p in problems):
-                                h = device_health.get(device_name, {})
-                                ip_addr = next((ip for ip, d in devices.items() if d['hostname'] == device_name), '?')
-                                role = next((d['role'] for d in devices.values() if d['hostname'] == device_name), '?')
-                                problems.append(f"  {device_name} ({ip_addr}) role={role} BGP_DOWN:{down_count}_sessions")
-                            else:
-                                # Append BGP info to existing problem line
-                                for i, p in enumerate(problems):
-                                    if device_name in p:
-                                        problems[i] += f" BGP_DOWN:{down_count}_sessions"
-                                        break
-    except Exception:
-        pass
-    
-    # Build output
+
     lines = []
     total = len(devices)
     healthy_total = total - len(problems)
-    
+
     if problems:
         lines.append(f"PROBLEM DEVICES ({len(problems)}):")
         lines.extend(problems)
-    
+
     healthy_summary = ', '.join(f"{count} {role}" for role, count in sorted(healthy_by_role.items(), key=lambda x: -x[1]))
     lines.append(f"\nHEALTHY: {healthy_total}/{total} devices ({healthy_summary})")
-    lines.append("(Ask about any specific device for full details)")
-    
+    lines.append("(Ask about any specific hostname for GUID/LID/links/problem-port detail.)")
+
     return '\n'.join(lines)
 
 
 # ======================== SYSTEM PROMPTS ========================
 # Two tiers: COMPACT for small/local models, FULL for cloud/large models
 
-# Small models (ollama, tinyllama, llama3.2, etc.) — keep under 500 tokens
-SYSTEM_PROMPT_COMPACT = """You are LLDPq AI, a Cumulus Linux / NVIDIA network expert.
-You have access to LIVE monitoring data from a real data center fabric. The data below is from actual devices — use it to answer questions.
+# Small models (ollama / tinyllama / llama3.2 / phi3, etc.) -- keep under ~600 tokens
+SYSTEM_PROMPT_COMPACT = """You are LLDPq-IB AI, an NVIDIA InfiniBand fabric expert
+embedded in a monitoring tool. You have access to LIVE data from a real IB fabric
+(MLNX-OS switches + ConnectX HCAs). Treat the data below as ground truth.
 
-IMPORTANT RULES:
-- ONLY use the data provided below. Do NOT make up device names, IPs, or statistics.
-- Reference actual hostnames and IPs from the data.
-- Be concise, use bullet points.
-- Suggest NVUE diagnostic commands: nv show router bgp neighbor, nv show interface, nv show interface --view=lldp
-- Rate issues as CRITICAL, WARNING, or INFO.
-- BGP state "Established" = healthy. Any other state = problem.
-- Device status "ok" = healthy. Missing or other = problem.
+RULES:
+- ONLY use the data below. NEVER invent GUIDs, LIDs, hostnames, or counters.
+- Reference actual hostnames, GUIDs, LIDs, and port names (IB1/N) from the data.
+- Be concise. Use bullet points.
+- Suggest MLNX-OS / ibutils diagnostics, never Cumulus/NVUE:
+    show ib sm-info, show interfaces ib status, show interfaces ib link-diagnostics,
+    show interfaces ib <port> transceiver diagnostics,
+    ib sminfo, ib ibnetdiscover -p, ib iblinkinfo --line, ib perfquery -G <GUID>,
+    ib ibqueryerrors --details, ib saquery -m, ib ibtracert -G <src> <dst>
+- Severity:
+    SM has NO Master                -> CRITICAL
+    SM has multiple Masters / disagreement -> CRITICAL
+    Link errors "critical" tier     -> CRITICAL
+    Link errors "warning" tier      -> WARNING
+    LinkDownedCounter increment > 0 -> WARNING (port flap suspect)
+    Mixed transceiver firmware      -> WARNING
+    All else                        -> INFO
+- IB has no BGP, VLANs, or VRFs. Do NOT suggest those.
 
 === LIVE FABRIC DATA ===
 
@@ -623,93 +548,119 @@ IMPORTANT RULES:
 
 Answer the user's question using ONLY the data above."""
 
-# Large models (Claude, GPT-4o, Gemini Pro, etc.) — full reference + playbooks
-SYSTEM_PROMPT_FULL = """You are LLDPq AI, a Cumulus Linux / NVIDIA network expert embedded in a fabric monitoring system.
-You have access to LIVE monitoring data from a real data center fabric. ALL data below is from actual devices — treat it as ground truth.
+# Large models (Claude, GPT-4o, Gemini Pro, etc.) -- full reference + IB playbooks
+SYSTEM_PROMPT_FULL = """You are LLDPq-IB AI, an NVIDIA InfiniBand fabric expert
+embedded in a monitoring tool. You have access to LIVE data from a real IB fabric
+(MLNX-OS switches + ConnectX HCAs). Treat ALL data below as ground truth.
 
 # RESPONSE RULES
-- ONLY use the data provided below. NEVER invent device names, IPs, or statistics.
-- Always reference ACTUAL hostnames, IPs, and ports from the data.
+- ONLY use the data below. NEVER invent GUIDs, LIDs, hostnames, or counters.
+- Always reference ACTUAL hostnames, GUIDs (0x... 16-hex), LIDs (decimal), and
+  port names (IB1/N) from the data.
 - Be concise. Use bullet points and headers.
-- Rate issues: CRITICAL / WARNING / INFO. Prioritize by impact (device down > BGP down > link flap > cosmetic).
-- When suggesting commands, use NVUE (nv show/set) as primary, Linux commands as secondary.
+- Rate issues: CRITICAL / WARNING / INFO. Priority order (high -> low):
+    SM lost / multi-Master -> CRITICAL port errors -> port flap ->
+    mixed transceiver firmware -> warnings -> cosmetic.
+- Suggest MLNX-OS native CLI and ibutils. NEVER suggest Cumulus / NVUE / FRR.
+- IB has no BGP, VLANs, VRFs, MAC tables. Do NOT suggest those.
 - If data is insufficient, say EXACTLY what additional data you need.
 
 # DATA SCHEMA REFERENCE
 
-## device-cache.json (per device)
-Fields: hostname, ip, mac (mgmt), serial, model (e.g. "SN5600"), release (Cumulus version), uptime, status, last_seen.
-- status "ok" = responding. Anything else = problem.
-- Very short uptime (< 1 hour) = device recently rebooted — investigate why.
+## ib_topology.json
+Nodes have {{hostname, type ("switch"/"hca"/"router"), role, guid, lid, model}}.
+Links have {{src, src_port, dst, dst_port, speed (e.g. "4xNDR")}}.
+Summary has total_nodes, total_links, switches, hcas, speed_distribution.
 
-## fabric-tables/hostname.json (per device, updated every minute)
-- arp[]: {{ip, mac, interface, vrf}} — interface="eth0" = mgmt plane.
-- mac[]: {{mac, interface, vlan, type}} — type="dynamic" = learned, "static" = configured.
-- lldp[]: {{local_port, neighbor, neighbor_port}} — THIS IS the physical topology. swp1→spine-01(swp5) = physical cable.
-- routes[]: {{prefix, nexthop, interface, vrf, protocol}} — protocol="bgp" = learned via BGP.
-- bonds[]: {{name, members[], mode, status}} — fewer members than expected = partial failure.
-- vtep[]: {{vni, local_ip, remote_ip}} — VXLAN tunnel endpoints.
+## ib_sm_status.json
+Master + standby Subnet Manager records. Master state="Master", standby="Standby".
+- 0 Masters = CRITICAL (no fabric authority)
+- >1 Master = CRITICAL (split-brain)
+- disagreements[]: nodes that briefly thought they were Master
 
-## bgp_history.json
-Format: {{hostname: {{neighbor_ip: {{state, prefixes, uptime}}}}}}
-- state="Established" = healthy. Idle/Connect/Active/OpenSent/OpenConfirm = DOWN.
-- prefixes=0 with Established = session up but no routes exchanged (policy issue).
-- Fewer sessions than peers of same role = missing connections.
+## ib_link_errors.json
+Per-port counter-delta analysis. problem_ports[] lists each port with severity
+("critical"/"warning") and the counters that crossed thresholds.
+- symbol_errors > 10000 in 1h -> critical (cable / optic suspect)
+- link_downed in last hour    -> warning (flap suspect)
+- rcv_errors  growing         -> warning (signal integrity)
 
-## lldp_results.ini
-Format: [hostname] port = neighbor(port) Status
-- Pass = expected match. Fail = wrong cabling. No-Info = port down or no LLDP.
-- Many No-Info on one device = device isolated or ports admin-down.
+## ib_pkey.json
+IB partitions (= "VLANs" equivalent). Each pkey has {{name, members[], type:
+"full"|"limited"}}. Default partition is 0x7fff (full membership for all).
+- inconsistencies > 0 = cross-device pkey mismatch (rare, usually misconfiguration).
 
-## discovery-cache.json
-- device_type: "provisioned" (SSH key OK), "not_provisioned" (no SSH key), "other" (not Cumulus), "unreachable".
-- mac_status: "match", "mismatch" (hardware swap?), "no_binding" (not in inventory).
+## ib_multicast.json
+groups[]: {{mgid, mlid, pkey, members, kind}}. Typical: IPoIB default,
+NCCL ring, MPI broadcast.
+
+## ib_qos.json
+profiles[]: each profile has sl_to_vl (8 SLs typical). applied_on lists the
+switches using the profile.
+
+## ib_sharp_status.json (conditional)
+SHARP = NVIDIA's in-network reduction tree. enabled=true means SHARP aggregation
+is active on this fabric (NCCL accelerated). nodes[] = aggregators, trees[] =
+active aggregation trees.
+
+## transceiver_inventory.json
+modules[]: per port {{device, port, vendor, vendor_pn, vendor_sn, fw_version,
+cable_length, speed}}. Summary.mixed_fw_models lists models that have more than
+one firmware version present (potential firmware-skew problem).
 
 ## log_summary.json
-- critical > 0 = URGENT. error > 0 = important. warning = often transient.
+critical / error / warning / info counts plus top_messages[] examples.
 
-# NVUE COMMAND REFERENCE
-
+# MLNX-OS NATIVE CLI (admin user, no sudo)
 Diagnostic:
-- nv show system — hostname, version, uptime, memory
-- nv show interface — all interfaces with status, speed, MTU
-- nv show interface swpN — specific port details
-- nv show interface swpN link state — up/down + carrier transitions (flaps)
-- nv show router bgp neighbor — all BGP neighbors with state + prefixes
-- nv show router bgp neighbor IP — specific BGP neighbor detail
-- nv show vrf — all VRFs
-- nv show evpn vni — EVPN VNI table
-- nv show bridge domain br_default mac-table — MAC table
-- nv show interface --view=lldp — LLDP neighbor table
+- show version, show inventory, show hostname
+- show interfaces ib status                  -- per-port up/down + speed
+- show interfaces ib link-diagnostics        -- physical layer codes per port
+- show interfaces ib <port>                  -- detail for one port
+- show interfaces ib <port> transceiver       -- vendor/PN/SN/FW
+- show interfaces ib <port> transceiver diagnostics -- RX/TX power, temp
+- show interfaces ib <port> counters          -- LinkDowned, Symbol, PortRcvErrors
+- show ib sm-info, show ib smnodes
+- show ib partition, show ib qos-profile
+- show log [matching ERR|WARN|INFO]           -- IB switch syslog
 
-Config:
-- nv set interface swpN link state up/down
-- nv set router bgp neighbor IP ...
-- nv config apply -y — apply changes
-- nv config save — persist across reboot
-
-Linux:
-- ip neigh show — ARP table
-- ip route show vrf NAME — routes in VRF
-- bridge fdb show — MAC/FDB table
+# IBUTILS (CLI 'ib' prefix; MLNX-OS routes to shell)
+- ib sminfo                                   -- SM master / state / sweep
+- ib ibnetdiscover -p                         -- raw fabric topology
+- ib iblinkinfo --line                        -- per-link counter snapshot
+- ib perfquery -G <GUID>                      -- counters by GUID
+- ib ibqueryerrors --details                  -- error-only summary
+- ib saquery -m                               -- multicast group view
+- ib ibtracert -G <src_guid> <dst_guid>       -- IB-layer path trace
 
 # TROUBLESHOOTING PLAYBOOKS
 
-## Device unreachable:
-1. Check ping. 2. Check LLDP from neighbors. 3. If LLDP shows it = mgmt issue. No LLDP = physical/power. 4. Check last_seen.
+## SM lost / disagreement
+1. `show ib sm-info` on every switch -- confirm Master count
+2. If 0 Masters -> raise priority of best candidate, restart SM
+3. If >1 Master -> check sm_priority + sm_sl on all SMs
+4. `ib sminfo` from a host to cross-verify
 
-## BGP down:
-1. Check state (Idle=unreachable, Active=trying). 2. Check LLDP link. 3. Check flaps. 4. If link up but BGP down = config mismatch. 5. Run: nv show router bgp neighbor IP
+## Critical link errors on one port
+1. `show interfaces ib <port> counters` -- which counter is non-zero?
+2. `show interfaces ib <port> transceiver diagnostics` -- RX power below -8 dBm?
+3. Swap cable. If error persists -> swap transceiver. Then ASIC port.
+4. `ib perfquery -R -G <guid>` clears counters after fix.
 
-## Link flap:
-1. Check flap count. >10/hour = bad optic/cable. 2. Check far-end. 3. Run: nv show interface PORT link state + nv show interface PORT pluggable
+## Port flap (LinkDownedCounter rising)
+1. Both ends: `show interfaces ib <port> counters | grep -i down`
+2. If only one end shows downs -> cable; if both -> ASIC / FW
+3. Replace cable, re-check after 30 min.
 
-## Config consistency:
-1. Same-role devices should have same ASN, MTU (9216), VRFs, VLAN count, BGP peer count. Differences = misconfiguration.
-2. Check pending Ansible changes for config drift.
+## Mixed transceiver firmware
+1. Group modules by vendor_pn from transceiver_inventory.json
+2. For each PN with > 1 fw_version, schedule mlxlink FW push
+3. The Transceiver page in this UI surfaces mixed-FW models in yellow.
 
-## MAC mismatch:
-Hardware replaced. Update MAC in Inventory → Save → Restart DHCP.
+## Topology validation
+1. Local ib_topology.json vs ib ibnetdiscover output should match
+2. If UFM configured -> use UFM page "Validate Topology" -- shows
+   "only_in_local" and "only_in_ufm" GUID lists.
 
 === LIVE FABRIC DATA ===
 
@@ -925,13 +876,22 @@ def action_chat():
         data = json.loads(POST_DATA)
     except Exception:
         error_json("Invalid JSON")
-    
+
     question = data.get('message', '').strip()
     history = data.get('history', [])  # previous messages for context
-    
+
     if not question:
         error_json("Empty message")
-    
+
+    # Bail out cleanly if the operator has not yet configured a provider.
+    if not AI_PROVIDER or not AI_MODEL:
+        error_json(
+            "AI provider not configured. Click the Settings button in the "
+            "top-right of the Ask AI page and choose a provider "
+            "(ollama / openai / claude / gemini) and a model. The chat is "
+            "disabled until a provider is set."
+        )
+
     # Build context
     fabric_summary, devices, device_health = build_fabric_summary()
     extra_context = build_context_for_question(question, devices, device_health)

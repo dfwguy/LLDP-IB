@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-LLDPq Alert System - Test script for Slack webhook configuration
-Copyright (c) 2024 LLDPq Project - Licensed under MIT License
+LLDPq-IB Alert System - Test script for Slack webhook configuration
+Copyright (c) 2024-2026 LLDPq Project - Licensed under MIT License
 
-This script sends test alerts to verify Slack webhook configuration.
+Sends a single test alert to verify Slack webhook configuration. After this
+passes, real alerts will be emitted every 10 minutes by the cron job
+`bin/lldpq` (which now invokes `check_alerts.py` after `ib-monitor.sh`).
+
 Usage: python3 test_alerts.py
 """
 
@@ -129,9 +132,10 @@ def main():
     print()
     print("📖 Next steps:")
     print("   1. Adjust thresholds in notifications.yaml if needed")
-    print("   2. Wait for monitoring data to be collected (monitor.sh)")
-    print("   3. Alerts will be automatically sent when thresholds are exceeded")
-    print("   4. Check alert states in: monitor/alert-states/")
+    print("   2. Wait for IB monitoring data to be collected (ib-monitor.sh)")
+    print("   3. Alerts are sent when SM goes Master-less, links degrade,")
+    print("      devices become unreachable, or hardware thresholds are hit")
+    print("   4. Check alert states in: lldpq/alert-states/")
 
 if __name__ == "__main__":
     main()

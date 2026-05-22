@@ -84,8 +84,21 @@ RUN MONACO_VERSION="0.45.0" && TMP_DIR=$(mktemp -d) && \
 # Copy lldpq scripts
 COPY lldpq/ /home/lldpq/lldpq/
 COPY bin/ /usr/local/bin/
-# Test fixtures (used with LLDPQ_IB_MOCK=1 for offline testing)
+# Test fixtures + demo-data generator (LLDPQ_IB_MOCK=1 offline tests
+# AND LLDPQ_DEMO=true pre-populated showcase fabric).
 COPY tests/ /home/lldpq/tests/
+
+# Pre-populate /var/www/html/monitor-results + assets.ini + topology.dot
+# with the demo fabric (4 spine + 8 leaf + 16 HCA). The entrypoint copies
+# this baseline into the runtime volume only when LLDPQ_DEMO=true.
+RUN mkdir -p /opt/lldpq-demo \
+    && python3 /home/lldpq/tests/generate_demo_data.py \
+        --target /opt/lldpq-demo/monitor-results \
+        --web-root /opt/lldpq-demo \
+    && cp /home/lldpq/tests/fixtures/demo-devices.yaml /opt/lldpq-demo/devices.yaml \
+    && chown -R lldpq:www-data /opt/lldpq-demo \
+    && find /opt/lldpq-demo -type d -exec chmod 775 {} \; \
+    && find /opt/lldpq-demo -type f -exec chmod 664 {} \;
 
 # Copy nginx config
 COPY etc/nginx/sites-available/lldpq /etc/nginx/sites-available/lldpq

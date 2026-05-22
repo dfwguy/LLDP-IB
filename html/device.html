@@ -802,8 +802,15 @@
         <button class="tab-btn" data-tab="logs">Logs</button>
         <button class="tab-btn" data-tab="config">Config</button>
         <button class="tab-btn" data-tab="commands">Command Runner</button>
+        <!--
+            Packet Capture and Diagnostic Bundle tabs are hidden in the IB edition.
+            MLNX-OS exposes tcpdump and tech-support only via `_shell`, which is
+            not whitelisted in ib-api.sh. The tab panels below render an
+            informational placeholder if reached directly via URL anchor.
         <button class="tab-btn" data-tab="capture">Capture</button>
         <button class="tab-btn" data-tab="clsupport">cl-support</button>
+        -->
+        
     </div>
     
     <!-- Overview Tab -->
@@ -881,9 +888,9 @@
     <div class="tab-content" id="tab-config">
         <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap;">
             <select id="configFormat" onchange="loadDeviceConfig()" style="padding: 8px 12px; background: #252526; border: 1px solid #404040; border-radius: 4px; color: #fff; font-size: 13px;">
-                <option value="commands">nv config show -o commands</option>
-                <option value="yaml">nv config show -o yaml</option>
-                <option value="diff">nv config diff</option>
+                <option value="text">show running-config</option>
+                <option value="expanded">show running-config expanded</option>
+                <option value="diff">show running-config diff</option>
             </select>
             <button class="cmd-btn" onclick="loadDeviceConfig()" style="background: #76b900; color: #000; padding: 8px 16px;">Refresh</button>
             <button class="cmd-btn" onclick="downloadConfig()" style="background: #4ec9b0; color: #000; padding: 8px 16px;">Download</button>
@@ -1028,7 +1035,7 @@
             
             <!-- Custom Command -->
             <div class="custom-command">
-                <input type="text" id="customCmd" name="customCmd" autocomplete="on" placeholder="Enter custom command (nv show, sudo vtysh -c 'show...')">
+                <input type="text" id="customCmd" name="customCmd" autocomplete="on" placeholder="Enter MLNX-OS command (show ..., ib ...; pipes: | grep|head|tail|wc|awk)">
                 <button onclick="runCustomCommand()">Run</button>
             </div>
         </div>
@@ -1039,15 +1046,49 @@
         </div>
     </div>
     
-    <!-- Capture Tab (tcpdump only) -->
+    <!-- Capture Tab (disabled in IB edition; placeholder kept for tabsLoaded compatibility) -->
     <div class="tab-content" id="tab-capture">
-        <div class="capture-section">
-            <h3 style="color: #76b900; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                </svg>
-                Packet Capture (tcpdump)
-            </h3>
+        <div style="background: #252526; border: 1px solid #3c3c3c; border-radius: 8px; padding: 30px; max-width: 700px; margin: 20px auto; text-align: center;">
+            <div style="color: #ff9800; font-size: 16px; font-weight: 600; margin-bottom: 12px;">Packet Capture Not Available in IB Edition</div>
+            <p style="color: #d4d4d4; line-height: 1.6; margin: 0 0 12px;">
+                MLNX-OS exposes tcpdump only via <code style="color: #dcdcaa;">_shell</code>,
+                which is not whitelisted in the IB API for safety.
+            </p>
+            <p style="color: #888; font-size: 13px; margin: 0;">
+                For IB link / cable diagnostics use the <strong>Optical</strong> /
+                <strong>Ports</strong> tabs or
+                <code style="color: #dcdcaa;">show interfaces ib &lt;port&gt; counters</code>
+                from <strong>Command Runner</strong>.
+            </p>
+        </div>
+    </div>
+
+    <!-- cl-support Tab (disabled in IB edition; placeholder kept for tabsLoaded compatibility) -->
+    <div class="tab-content" id="tab-clsupport">
+        <div style="background: #252526; border: 1px solid #3c3c3c; border-radius: 8px; padding: 30px; max-width: 700px; margin: 20px auto; text-align: center;">
+            <div style="color: #ff9800; font-size: 16px; font-weight: 600; margin-bottom: 12px;">Diagnostic Bundle Not Available in IB Edition</div>
+            <p style="color: #d4d4d4; line-height: 1.6; margin: 0 0 12px;">
+                Cumulus <code style="color: #dcdcaa;">cl-support</code> does not apply
+                to MLNX-OS. The closest equivalent is
+                <code style="color: #dcdcaa;">show tech-support</code> from the
+                MLNX-OS CLI, which is large and intentionally not exposed through
+                the IB API.
+            </p>
+            <p style="color: #888; font-size: 13px; margin: 0;">
+                Generate a tech-support bundle manually:
+                <code style="color: #dcdcaa;">ssh admin@switch "cli enable show tech-support"</code>
+            </p>
+        </div>
+    </div>
+
+    <!-- (legacy capture / cl-support markup removed for IB edition) -->
+    <div style="display: none;" id="legacy-capture-markup">
+        <h3 style="color: #76b900; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            Packet Capture (tcpdump)
+        </h3>
             
             <!-- Interface datalist for all interfaces including SVIs -->
             <datalist id="captureInterfaceList"></datalist>
@@ -1244,8 +1285,10 @@
         </style>
     </div>
     
-    <!-- cl-support Tab -->
-    <div class="tab-content" id="tab-clsupport">
+    <!-- Legacy cl-support tab markup, retained inside a hidden wrapper to avoid
+         duplicate IDs while keeping the JS handlers compilable. The real
+         (placeholder) tab-clsupport panel is rendered above. -->
+    <div style="display: none;" id="legacy-clsupport-markup">
         <div class="capture-section" style="max-width: 700px;">
             <h3 style="color: #ff9800; margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1830,7 +1873,16 @@
             const out = document.getElementById('configOutput');
             const status = document.getElementById('configStatus');
             const fmt = document.getElementById('configFormat').value;
-            const cmd = fmt === 'diff' ? 'nv config diff' : `nv config show -o ${fmt}`;
+            // MLNX-OS: running-config is dumped via `show running-config`. The
+            // `expanded` flag shows defaults; `diff` shows pending vs. saved.
+            let cmd;
+            if (fmt === 'expanded') {
+                cmd = 'show running-config expanded';
+            } else if (fmt === 'diff') {
+                cmd = 'show running-config diff';
+            } else {
+                cmd = 'show running-config';
+            }
 
             out.textContent = `Fetching ${cmd} from ${deviceName}...`;
             status.textContent = '';
@@ -1930,10 +1982,13 @@
                 showNotification('Please select or enter a bond name', 'warning');
                 return;
             }
+            // No-op stub: IB switches have no bond/LAG concept. The branches
+            // below are unreachable from the IB UI (bond UI element is hidden)
+            // and only kept so any stale call from legacy code does not crash.
             if (type === 'details') {
-                runCommand('nv show interface ' + bond);
+                runCommand('show interfaces ib ' + bond);
             } else if (type === 'members') {
-                runCommand('cat /proc/net/bonding/' + bond);
+                runCommand('show interfaces ib ' + bond);
             }
         }
         
@@ -2923,14 +2978,15 @@
             detailDiv.innerHTML = `<div style="color: #76b900; margin-bottom: 10px;">Loading L1 diagnostics for ${port}...</div>`;
             
             try {
-                // Run l1-show for detailed info
+                // MLNX-OS exposes L1 / cable diagnostics via the transceiver
+                // diagnostics view -- no sudo or shell required.
                 const response = await fetch('/ib-api.sh?action=run-device-command', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({device: deviceName, command: `sudo l1-show ${port}`})
+                    body: JSON.stringify({device: deviceName, command: `show interfaces ib ${port} transceiver diagnostics`})
                 });
                 const data = await response.json();
-                
+
                 if (data.success) {
                     detailDiv.innerHTML = `<div style="color: #76b900; margin-bottom: 10px; font-weight: bold;">L1 Diagnostics: ${port}</div>${data.output}`;
                 } else {
@@ -2973,16 +3029,18 @@
             logOutput.style.display = 'block';
             logOutput.textContent = 'Loading logs...';
             
-            // Map severity to journalctl priority
-            const priorityMap = {
-                'critical': '0..2',
-                'error': '3',
-                'warning': '4',
-                'info': '5..6'
+            // MLNX-OS uses `show log matching <pattern>` (case-insensitive regex)
+            // instead of journalctl. ERR matches critical+error, WARN matches
+            // warnings, INFO matches informational entries.
+            const matchMap = {
+                'critical': 'ERR',
+                'error': 'ERR',
+                'warning': 'WARN',
+                'info': 'INFO'
             };
-            
+
             try {
-                const cmd = `sudo journalctl -p ${priorityMap[severity]} -n 100 --no-pager`;
+                const cmd = `show log matching ${matchMap[severity]} | tail -n 200`;
                 const response = await fetch('/ib-api.sh?action=run-device-command', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},

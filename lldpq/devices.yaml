@@ -1,12 +1,13 @@
-# Copyright (c) 2024 LLDPq Project
+# Copyright (c) 2024-2026 LLDPq Project
 # Licensed under MIT License - see LICENSE file for details
 #
 # =============================================================================
-# devices.yaml - LLDPq Network Device Configuration
-# =======================================================
+# devices.yaml -- LLDPq-IB Network Device Configuration
+# =====================================================
 #
 # PURPOSE:
-#   Central device configuration for LLDPq. Used by pping, zzh, send-cmd, get-conf.
+#   Central device configuration for LLDPq-IB. Used by ib-monitor, ib-assets,
+#   get-conf, send-cmd, zzh, pping, and the web UI (assets, provision, device).
 #
 # FORMAT:
 #   IP: Hostname                    # simple
@@ -17,39 +18,36 @@
 #     role: role_name
 #
 # ROLES (optional):
-#   Add @role to group devices. Examples:
-#     10.10.100.10: Spine1 @spine
-#     10.10.100.12: Leaf1 @leaf
+#   Add @role to group IB devices. Examples:
+#     10.10.100.10: ib-spine-01 @spine
+#     10.10.100.20: ib-leaf-01  @leaf
+#     10.10.100.30: ib-core-01  @core
 #
 #   Usage:
-#     zzh               → type "@spine" to filter
-#     pping -r spine    → ping only @spine devices
-#     send-cmd -r spine → execute on @spine devices only
-#     --roles           → list all available roles (pping/send-cmd)
+#     zzh                 -> type "@spine" to filter
+#     pping -r spine      -> ping only @spine devices
+#     send-cmd -r spine   -> execute on @spine devices only
+#     --roles             -> list all available roles (pping / send-cmd)
 #
 # SSH REQUIREMENTS:
-#   - SSH key auth configured (use send-keys.sh)
-#   - Sudo privileges on devices (use sudo-fix.sh)
+#   - SSH key auth pushed to each MLNX-OS switch (Provision > SSH Setup,
+#     or `lldpq/send-key.sh` from CLI).
+#   - admin user on MLNX-OS is already privileged via the CLI;
+#     `sudo` is NOT prepended to MLNX-OS commands.
 #
-# =======================================================
+# =====================================================
 
 defaults:
-  username: cumulus
+  username: admin
 
 devices:
 
-  10.10.100.101: Border1 @border
-  10.10.100.102: Border2 @border
-  10.10.100.252: Core1 @core
-  10.10.100.253: Core2 @core
-  10.10.100.10: Spine1 @spine
-  10.10.100.11: Spine2 @spine
-  10.10.100.12: Leaf1 @leaf
-  10.10.100.13: Leaf2 @leaf
-  10.10.100.20: Switch1 @access
-  10.10.100.21: Switch2 @access
-  10.10.100.210: inband-fw @firewall
-  10.10.100.212: oob-fw @firewall
+  # Example layout (replace with your real fabric):
+  # 10.10.100.10: ib-spine-01 @spine
+  # 10.10.100.11: ib-spine-02 @spine
+  # 10.10.100.20: ib-leaf-01  @leaf
+  # 10.10.100.21: ib-leaf-02  @leaf
+  # 10.10.100.30: ib-core-01  @core
 
   # Example: Custom username override
   # 192.168.1.10:

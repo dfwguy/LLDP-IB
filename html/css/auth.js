@@ -330,12 +330,53 @@ const LLDPqAuth = {
         }
     },
     
+    // Render a dark-theme confirmation modal (matches the LLDPq UI rules).
+    // Resolves to true on Confirm, false on Cancel / backdrop click.
+    confirmDelete(message) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);'
+                + 'z-index:10100;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:#2d2d2d;border:1px solid #404040;border-radius:8px;
+                            width:380px;max-width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+                    <div style="padding:18px 22px;border-bottom:1px solid #3c3c3c;
+                                color:#f44336;font-weight:600;font-size:15px;">
+                        Confirm action
+                    </div>
+                    <div style="padding:20px 22px;color:#d4d4d4;font-size:14px;line-height:1.5;">
+                        ${message}
+                    </div>
+                    <div style="padding:14px 22px;background:#252526;border-top:1px solid #3c3c3c;
+                                display:flex;justify-content:flex-end;gap:10px;">
+                        <button id="lldpq-confirm-cancel"
+                                style="background:#404040;color:#fff;border:0;padding:8px 18px;
+                                       border-radius:4px;cursor:pointer;font-size:13px;">Cancel</button>
+                        <button id="lldpq-confirm-ok"
+                                style="background:#c53030;color:#fff;border:0;padding:8px 18px;
+                                       border-radius:4px;cursor:pointer;font-size:13px;">Delete</button>
+                    </div>
+                </div>`;
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) { document.body.removeChild(overlay); resolve(false); }
+            });
+            document.body.appendChild(overlay);
+            overlay.querySelector('#lldpq-confirm-cancel').onclick = () => {
+                document.body.removeChild(overlay); resolve(false);
+            };
+            overlay.querySelector('#lldpq-confirm-ok').onclick = () => {
+                document.body.removeChild(overlay); resolve(true);
+            };
+        });
+    },
+
     // Delete user
     async deleteUser(username) {
-        if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
-            return;
-        }
-        
+        const ok = await this.confirmDelete(
+            `Are you sure you want to delete user <strong>${username}</strong>? This cannot be undone.`
+        );
+        if (!ok) return;
+
         const errorDiv = document.getElementById('um-error');
         const successDiv = document.getElementById('um-success');
         

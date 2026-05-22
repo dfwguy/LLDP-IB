@@ -1,8 +1,20 @@
-.cursor/
 .vagrant/
 .DS_Store
 .ansible-test/
-__pycache__
+__pycache__/
 .cache
 .vscode
 IMPROVEMENT_PLAN.md
+
+# Runtime state (collected/computed at runtime, not source)
+lldpq/monitor-results/
+lldpq/alert-states/
+monitor-results/
+alert-states/
+
+# Runtime artefacts produced by ib-assets / ib-monitor / entrypoint.
+# These get re-created when the container starts; do not commit baked copies.
+html/assets.ini
+html/topology.dot
+html/topology_config.yaml
+html/monitor-results/

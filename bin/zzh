@@ -1650,7 +1650,7 @@ class Connections:
                 with open(DevicesYamlFile, 'r') as DevFile:
                     DevicesConfig = yaml.safe_load(DevFile)
                     if DevicesConfig and 'devices' in DevicesConfig:
-                        DefaultUser = DevicesConfig.get('defaults', {}).get('username', 'cumulus')
+                        DefaultUser = DevicesConfig.get('defaults', {}).get('username', 'admin')
                         DeviceCount = 0
                         for IpAddr, DevInfo in DevicesConfig['devices'].items():
                             # Handle formats:

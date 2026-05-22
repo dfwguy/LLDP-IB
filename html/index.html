@@ -438,7 +438,7 @@
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M3.5 18.5l6-6 4 4L22 6.92 20.59 5.5l-7.09 8-4-4L2 17l1.5 1.5z"/></svg></span>
                 <span class="menu-text">Telemetry</span>
             </a>
-            <a href="ai.html" title="Ask AI — Ask about your fabric" target="content-iframe" class="menu-item">
+            <a href="ai.html" title="Ask AI — Ask about your IB fabric" target="content-iframe" class="menu-item">
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg></span>
                 <span class="menu-text">Ask AI</span>
             </a>
@@ -509,10 +509,17 @@
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M17,3A2,2 0 0,1 19,5V15A2,2 0 0,1 17,17H13V19H14A1,1 0 0,1 15,20H22V22H15A1,1 0 0,1 14,23H10A1,1 0 0,1 9,22H2V20H9A1,1 0 0,1 10,19H11V17H7A2,2 0 0,1 5,15V5A2,2 0 0,1 7,3H17M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10Z"/></svg></span>
                 <span class="menu-text">SHARP</span>
             </a>
+            <!--
+                Optical menu item removed: there is no IB optical pipeline yet.
+                Transceiver page already covers vendor/PN/SN/FW. A deeper BER /
+                DOM history view will be added via the Telemetry UFM Chart.js
+                roadmap item; re-enable Optical when that lands.
             <a href="/monitor-results/optical-analysis.html" target="content-iframe" title="Optical Analysis" class="menu-item">
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z"/></svg></span>
                 <span class="menu-text">Optical</span>
             </a>
+            -->
+            
             <a href="/monitor-results/hardware-analysis.html" target="content-iframe" title="Hardware Analysis" class="menu-item">
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M17,17H7V7H17M21,11V9H19V7C19,5.89 18.1,5 17,5H15V3H13V5H11V3H9V5H7C5.89,5 5,5.89 5,7V9H3V11H5V13H3V15H5V17A2,2 0 0,0 7,19H9V21H11V19H13V21H15V19H17A2,2 0 0,0 19,17V15H21V13H19V11M13,13H11V11H13M15,9H9V15H15V9Z"/></svg></span>
                 <span class="menu-text">Hardware</span>
@@ -639,7 +646,7 @@
         document.querySelector('a[href="start.html"]').classList.add('active');
         
         // Version and update check
-        const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/aliaydemir/lldpq-src/main/VERSION';
+        const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/aliaydemir/lldpq-ib-src/main/VERSION';
         const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
         
         let localVersion = '';
@@ -760,10 +767,16 @@
                             <strong>Current:</strong> v${localVersion}<br>
                             <strong>Latest:</strong> v${remoteVersion}
                         </p>
-                        <p style="margin: 0 0 15px 0; color: #999;">To update, run these commands on your server:</p>
-                        <pre style="background: #1e1e1e; padding: 15px; border-radius: 4px; margin: 0; font-family: 'Consolas', monospace; font-size: 13px; overflow-x: auto;">cd ~/lldpq-src
-git pull
-./install.sh</pre>
+                        <p style="margin: 0 0 15px 0; color: #999;">LLDPq-IB ships as a Docker image. Update with:</p>
+                        <pre style="background: #1e1e1e; padding: 15px; border-radius: 4px; margin: 0; font-family: 'Consolas', monospace; font-size: 13px; overflow-x: auto;"># If using a published image:
+docker pull lldpq/lldpq-ib:latest
+docker stop lldpq-ib &amp;&amp; docker rm lldpq-ib
+docker run -d --name lldpq-ib --network host --privileged \
+  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
+  lldpq/lldpq-ib:latest
+
+# Or rebuild from source:
+cd ~/lldpq-ib-src &amp;&amp; git pull &amp;&amp; docker build -t lldpq-ib:latest .</pre>
                     </div>
                     <div style="padding: 15px 20px; background: #252526; text-align: right; border-top: 1px solid #404040; border-radius: 0 0 8px 8px;">
                         <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background: #404040; color: white; border: none; padding: 10px 25px; border-radius: 4px; cursor: pointer; font-size: 14px;">Close</button>
@@ -782,12 +795,12 @@ git pull
                 <img src="/png/lldpq-banner.png" alt="LLDPq" style="width:100%; border-radius:8px; margin-bottom:20px;">
                 <div style="font-size:28px; font-weight:700; color:#fff; letter-spacing:-0.5px;">LLDPq</div>
                 <div id="about-version" style="font-size:13px; color:#76b900; margin-top:4px;"></div>
-                <div style="font-size:13px; color:#888; margin-top:8px;">Network Monitoring for Cumulus Linux Switches</div>
+                <div style="font-size:13px; color:#888; margin-top:8px;">Network Monitoring for NVIDIA InfiniBand Fabrics (MLNX-OS)</div>
             </div>
             <div style="padding:15px 30px; border-top:1px solid #3c3c3c;">
                 <div style="display:flex; justify-content:space-between; margin:6px 0;"><span style="color:#888;">Author</span><span style="color:#d4d4d4;">Ali Aydemir</span></div>
                 <div style="display:flex; justify-content:space-between; margin:6px 0;"><span style="color:#888;">License</span><span style="color:#d4d4d4;">MIT</span></div>
-                <div style="display:flex; justify-content:space-between; margin:6px 0;"><span style="color:#888;">GitHub</span><a href="https://github.com/aliaydemir/lldpq-src" target="_blank" rel="noopener" style="color:#4fc3f7; text-decoration:none;">github.com/aliaydemir/lldpq-src</a></div>
+                <div style="display:flex; justify-content:space-between; margin:6px 0;"><span style="color:#888;">GitHub</span><a href="https://github.com/aliaydemir/lldpq-ib-src" target="_blank" rel="noopener" style="color:#4fc3f7; text-decoration:none;">github.com/aliaydemir/lldpq-ib-src</a></div>
             </div>
             <div style="padding:15px 30px 20px; background:#252526; border-top:1px solid #3c3c3c; text-align:right;">
                 <button onclick="closeAboutModal()" style="background:#404040; color:white; border:none; padding:8px 24px; border-radius:4px; cursor:pointer; font-size:13px;">Close</button>

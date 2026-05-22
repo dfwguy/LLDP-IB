@@ -21,7 +21,10 @@ DHCP_HOSTS_FILE="${DHCP_HOSTS_FILE:-/etc/dhcp/dhcpd.hosts}"
 DHCP_CONF_FILE="${DHCP_CONF_FILE:-/etc/dhcp/dhcpd.conf}"
 DHCP_LEASES_FILE="${DHCP_LEASES_FILE:-/var/lib/dhcp/dhcpd.leases}"
 ZTP_SCRIPT_FILE="${ZTP_SCRIPT_FILE:-${WEB_ROOT}/mlnxos-ztp.sh}"
-BASE_CONFIG_DIR="${BASE_CONFIG_DIR:-${LLDPQ_DIR}/sw-base}"
+# Cumulus sw-base shell snippets are not used in the IB edition; the deploy
+# action returns a stub. The variable is kept so any legacy reference still
+# resolves to a harmless empty path.
+BASE_CONFIG_DIR="${BASE_CONFIG_DIR:-}"
 
 # Output JSON header
 echo "Content-Type: application/json"
@@ -71,7 +74,7 @@ WEB_ROOT = os.environ.get('WEB_ROOT', '/var/www/html')
 DHCP_HOSTS_FILE = os.environ.get('DHCP_HOSTS_FILE', '/etc/dhcp/dhcpd.hosts')
 DHCP_LEASES_FILE = os.environ.get('DHCP_LEASES_FILE', '/var/lib/dhcp/dhcpd.leases')
 ZTP_SCRIPT_FILE = os.environ.get('ZTP_SCRIPT_FILE', f'{WEB_ROOT}/mlnxos-ztp.sh')
-BASE_CONFIG_DIR = os.environ.get('BASE_CONFIG_DIR', f'{LLDPQ_DIR}/sw-base')
+BASE_CONFIG_DIR = os.environ.get('BASE_CONFIG_DIR', '')
 DISCOVERY_RANGE = os.environ.get('DISCOVERY_RANGE', '')
 AUTO_BASE_CONFIG = False  # disabled on IB edition
 AUTO_ZTP_DISABLE = os.environ.get('AUTO_ZTP_DISABLE', 'true') == 'true'
@@ -1068,27 +1071,55 @@ def action_subnet_scan():
     
     # Step 3: SSH probe reachable IPs for device classification + serial collection
     def ssh_probe(ip):
-        """Try SSH with key auth as cumulus user (runs as LLDPQ_USER to use correct SSH keys).
-        Returns: (ip, device_type, serial, base_deployed)"""
+        """Probe a discovered IP for MLNX-OS via SSH key auth as 'admin'.
+        Runs `show inventory` to confirm we're talking to MLNX-OS and to pull
+        the chassis serial number. Returns: (ip, device_type, serial, base_deployed).
+
+        device_type semantics:
+          - 'provisioned'    : SSH succeeded AND output looks like MLNX-OS
+          - 'not_provisioned': SSH refused key auth (default password still in place)
+          - 'other'          : Connection refused / timeout / non-MLNX-OS response
+        base_deployed is always False on the IB edition (no sw-base marker).
+        """
         try:
             r = subprocess.run(
                 ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3',
                  '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-                 '-o', 'LogLevel=ERROR', f'cumulus@{ip}',
-                 'echo OK; sudo dmidecode -s system-serial-number 2>/dev/null | head -1; test -f /etc/lldpq-base-deployed && echo BASE_DEPLOYED || echo BASE_PENDING'],
+                 '-o', 'LogLevel=ERROR', f'admin@{ip}',
+                 # `show inventory` works at the un-enabled CLI on MLNX-OS and
+                 # returns a table whose first data row contains the chassis SN.
+                 'show inventory'],
                 capture_output=True, text=True, timeout=10
             )
-            if r.returncode == 0 and 'OK' in r.stdout:
-                lines = r.stdout.strip().split('\n')
-                serial = lines[1].strip() if len(lines) > 1 else ''
-                if not serial or serial.lower() in ('', 'na', 'n/a', 'not specified', 'none'):
-                    serial = ''
-                base_deployed = 'BASE_DEPLOYED' in r.stdout
-                return ip, 'provisioned', serial, base_deployed
-            stderr = r.stderr.lower()
+            if r.returncode == 0 and r.stdout.strip():
+                out = r.stdout
+                # MLNX-OS `show inventory` output marker -- the column header
+                # always contains "Product Name" and "Serial Number".
+                looks_like_mlnx = (
+                    'Serial Number' in out
+                    or 'Product Name' in out
+                    or 'MLNX-OS' in out
+                )
+                serial = ''
+                for line in out.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('-') or 'Module' in line or 'Serial' in line:
+                        continue
+                    parts = line.split()
+                    # Heuristic: MLNX serial numbers look like MT1234X12345 (12+ chars)
+                    for tok in parts:
+                        if len(tok) >= 10 and tok[0:2].isalpha() and any(c.isdigit() for c in tok):
+                            serial = tok
+                            break
+                    if serial:
+                        break
+                if looks_like_mlnx or serial:
+                    return ip, 'provisioned', serial, False
+                return ip, 'other', '', False
+            stderr = (r.stderr or '').lower()
             if 'permission denied' in stderr:
                 return ip, 'not_provisioned', '', False
-            if 'connection refused' in stderr:
+            if 'connection refused' in stderr or 'no route to host' in stderr:
                 return ip, 'other', '', False
             return ip, 'not_provisioned', '', False
         except subprocess.TimeoutExpired:
@@ -1157,104 +1188,49 @@ def action_subnet_scan():
         }
         entries.append(entry)
     
-    # Step 5: Post-provision actions for newly provisioned devices
-    auto_base = read_lldpq_conf_key('AUTO_BASE_CONFIG', 'true') == 'true'
-    auto_ztp = read_lldpq_conf_key('AUTO_ZTP_DISABLE', 'true') == 'true'
+    # Step 5: Post-provision actions for newly discovered MLNX-OS switches.
+    # The IB edition only supports hostname set (sw-base bundle removed,
+    # ZTP-disable on MLNX-OS is a `no boot...` command that varies per release).
     auto_host = read_lldpq_conf_key('AUTO_SET_HOSTNAME', 'true') == 'true'
-    
-    if auto_base or auto_ztp or auto_host:
-        # Only post-provision devices that have a binding AND haven't been deployed yet
-        provisioned_entries = [e for e in entries if e['device_type'] == 'provisioned' and e['has_binding'] and e['post_provision'] != 'already']
-        
+
+    post_results = {}
+    if auto_host:
+        provisioned_entries = [
+            e for e in entries
+            if e['device_type'] == 'provisioned'
+            and e['has_binding']
+            and e['hostname']
+            and e['post_provision'] != 'already'
+        ]
+
         def post_provision_one(entry):
             ip = entry['ip']
             hostname = entry['hostname']
-            
-            # Execute post-provision actions
-            cmds = []
-            
-            # sw-base deploy via SCP + SSH
-            scp_ok = False
-            if auto_base and os.path.isdir(BASE_CONFIG_DIR):
-                files_map = {
-                    'bash.bashrc': ['/etc/bash.bashrc', '/home/cumulus/.bashrc'],
-                    'motd.sh': ['/etc/profile.d/motd.sh'],
-                    'tmux.conf': ['/home/cumulus/.tmux.conf'],
-                    'nanorc': ['/home/cumulus/.nanorc'],
-                    'cmd': ['/usr/local/bin/cmd'],
-                    'nvc': ['/usr/local/bin/nvc'],
-                    'nvt': ['/usr/local/bin/nvt'],
-                    'exa': ['/usr/bin/exa'],
-                }
-                scp_files = []
-                copy_cmds = []
-                for fname, dests in files_map.items():
-                    src = os.path.join(BASE_CONFIG_DIR, fname)
-                    if os.path.exists(src):
-                        scp_files.append(src)
-                        for dest in dests:
-                            copy_cmds.append(f'sudo cp /tmp/{fname} {dest}')
-                            if dest.startswith('/usr/') or fname in ('cmd', 'nvc', 'nvt', 'exa', 'motd.sh'):
-                                copy_cmds.append(f'sudo chmod 755 {dest}')
-                # Fix shell startup: remove .bash_login (blocks .profile) and ensure .profile sources .bashrc
-                copy_cmds.append('rm -f /home/cumulus/.bash_login')
-                copy_cmds.append("echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /home/cumulus/.profile")
-                
-                if scp_files:
-                    try:
-                        scp_r = subprocess.run(
-                            ['sudo', '-u', LLDPQ_USER, 'scp', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3',
-                             '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-                             '-o', 'LogLevel=ERROR'] + scp_files + [f'cumulus@{ip}:/tmp/'],
-                            capture_output=True, text=True, timeout=15
-                        )
-                        if scp_r.returncode == 0:
-                            cmds.extend(copy_cmds)
-                            scp_ok = True
-                    except Exception:
-                        pass
-            
-            # ZTP disable (wrapped in subshell so || true doesn't affect && chain)
-            if auto_ztp:
-                cmds.append('(sudo ztp -d 2>/dev/null || true)')
-            
-            # Hostname set (wrapped in subshell)
-            if auto_host and hostname:
-                cmds.append(f'(sudo nv set system hostname {hostname} 2>/dev/null && sudo nv config apply -y 2>/dev/null || true)')
-            
-            # Write marker only if base config was deployed (or if SCP wasn't needed)
-            if scp_ok or not auto_base:
-                cmds.append('sudo touch /etc/lldpq-base-deployed')
-            
-            if cmds:
-                cmd_str = ' && '.join(cmds)
-                try:
-                    r = subprocess.run(
-                        ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
-                         '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-                         '-o', 'LogLevel=ERROR', f'cumulus@{ip}', cmd_str],
-                        capture_output=True, text=True, timeout=30
-                    )
-                    # Only report 'deployed' if SSH command actually succeeded
-                    if r.returncode == 0:
-                        return ip, 'deployed'
-                    else:
-                        return ip, 'failed'
-                except Exception:
-                    return ip, 'failed'
-            
-            return ip, None
-        
-        # Run post-provision in parallel (limited workers since these are heavier)
-        post_results = {}
+            # MLNX-OS hostname set via CLI enable + configure terminal.
+            # `cli` is a non-interactive wrapper that takes multiple commands.
+            remote_cmd = (
+                f'cli enable "configure terminal" '
+                f'"hostname {hostname}" "write memory" "exit" 2>/dev/null'
+            )
+            try:
+                r = subprocess.run(
+                    ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes',
+                     '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
+                     '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR',
+                     f'admin@{ip}', remote_cmd],
+                    capture_output=True, text=True, timeout=20
+                )
+                return ip, 'deployed' if r.returncode == 0 else 'failed'
+            except Exception:
+                return ip, 'failed'
+
         if provisioned_entries:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = {executor.submit(post_provision_one, e): e['ip'] for e in provisioned_entries}
                 for future in as_completed(futures):
                     ip, status = future.result()
                     post_results[ip] = status
-            
-            # Update entries with post-provision results
+
             for entry in entries:
                 if entry['ip'] in post_results:
                     entry['post_provision'] = post_results[entry['ip']]
@@ -1748,8 +1724,8 @@ def action_list_devices():
         error_json(str(e))
     
     defaults = data.get('defaults', {})
-    default_username = defaults.get('username', 'cumulus')
-    
+    default_username = defaults.get('username', 'admin')
+
     devices_section = data.get('devices', data)
     devices = []
     
@@ -1793,158 +1769,48 @@ def action_list_devices():
     
     result_json({"success": True, "devices": all_devices, "groups": groups})
 
-# ======================== BASE CONFIG DEPLOY ========================
+# ======================== BASE CONFIG DEPLOY (DISABLED IN IB EDITION) ========================
+# The Cumulus "Base Config" sw-base bundle (bashrc, motd, nvc/nvt/exa, etc.)
+# does not apply to MLNX-OS. The Provision UI no longer exposes Base Config
+# controls in the IB edition. The functions below are kept as no-op stubs so
+# any legacy POST still returns a structured JSON error instead of crashing.
 
-# File deployment mapping: source name -> (destination, permissions, extra_dest)
-FILE_DEPLOY_MAP = {
-    'bash.bashrc': [
-        {'dest': '/etc/bash.bashrc', 'mode': '644'},
-        {'dest': '/home/cumulus/.bashrc', 'mode': '644'}
-    ],
-    'motd.sh': [
-        {'dest': '/etc/profile.d/motd.sh', 'mode': '755'}
-    ],
-    'tmux.conf': [
-        {'dest': '/etc/tmux.conf', 'mode': '644'}
-    ],
-    'nanorc': [
-        {'dest': '/etc/nanorc', 'mode': '644'}
-    ],
-    'cmd': [
-        {'dest': '/usr/local/bin/cmd', 'mode': '755'}
-    ],
-    'nvc': [
-        {'dest': '/usr/local/bin/nvc', 'mode': '755'}
-    ],
-    'nvt': [
-        {'dest': '/usr/local/bin/nvt', 'mode': '755'}
-    ],
-    'exa': [
-        {'dest': '/usr/bin/exa', 'mode': '755'}
-    ]
-}
+FILE_DEPLOY_MAP = {}
 
 def deploy_to_device(device, files, disable_ztp):
-    """Deploy base config files to a single device via SCP + SSH.
-    Returns result dict.
-    """
-    ip = device['ip']
-    hostname = device['hostname']
-    username = device.get('username', 'cumulus')
-    
-    result = {
-        'ip': ip,
-        'hostname': hostname,
+    """Cumulus sw-base SCP+SSH deploy is not applicable to MLNX-OS. Returns a
+    structured "disabled" result so the original parallel-executor caller can
+    surface a uniform per-device message."""
+    return {
+        'ip': device.get('ip', ''),
+        'hostname': device.get('hostname', ''),
         'success': False,
         'message': '',
-        'error': ''
+        'error': 'Base Config deploy is not available in the IB edition (no sw-base bundle)',
     }
-    
-    ssh_opts = ['-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=no', '-o', 'BatchMode=yes']
-    
-    # Step 1: Check connectivity
-    try:
-        check = subprocess.run(
-            ['sudo', '-u', LLDPQ_USER, 'ssh'] + ssh_opts + ['-q', f'{username}@{ip}', 'echo ok'],
-            capture_output=True, text=True, timeout=15
-        )
-        if check.returncode != 0:
-            result['error'] = 'SSH connection failed (key not configured?)'
-            return result
-    except subprocess.TimeoutExpired:
-        result['error'] = 'SSH connection timeout'
-        return result
-    except Exception as e:
-        result['error'] = str(e)
-        return result
-    
-    # Step 2: SCP files to /tmp/
-    scp_files = []
-    for fname in files:
-        src = os.path.join(BASE_CONFIG_DIR, fname)
-        if os.path.exists(src):
-            scp_files.append(src)
-    
-    if not scp_files:
-        result['error'] = 'No source files found'
-        return result
-    
-    try:
-        scp_cmd = ['sudo', '-u', LLDPQ_USER, 'scp'] + ssh_opts + scp_files + [f'{username}@{ip}:/tmp/']
-        scp_result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=60)
-        if scp_result.returncode != 0:
-            result['error'] = f'SCP failed: {scp_result.stderr.strip()[:200]}'
-            return result
-    except subprocess.TimeoutExpired:
-        result['error'] = 'SCP timeout'
-        return result
-    except Exception as e:
-        result['error'] = f'SCP error: {e}'
-        return result
-    
-    # Step 3: SSH to move files to correct locations
-    mv_commands = []
-    has_bashrc = False
-    for fname in files:
-        if fname in FILE_DEPLOY_MAP:
-            for target in FILE_DEPLOY_MAP[fname]:
-                dest = target['dest']
-                mode = target['mode']
-                mv_commands.append(f'sudo cp /tmp/{fname} {dest} && sudo chmod {mode} {dest}')
-            if fname == 'bash.bashrc':
-                has_bashrc = True
-    
-    if has_bashrc:
-        mv_commands.append('rm -f /home/cumulus/.bash_login')
-        mv_commands.append("echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /home/cumulus/.profile")
-    
-    if disable_ztp:
-        mv_commands.append('sudo ztp -d 2>/dev/null || true')
-    
-    # Write marker so Discover tab shows "Yes" instead of "Pending"
-    mv_commands.append('sudo touch /etc/lldpq-base-deployed')
-    
-    # Cleanup tmp files
-    cleanup = ' '.join(f'/tmp/{fname}' for fname in files)
-    mv_commands.append(f'rm -f {cleanup}')
-    
-    remote_cmd = ' && '.join(mv_commands)
-    
-    try:
-        ssh_cmd = ['sudo', '-u', LLDPQ_USER, 'ssh'] + ssh_opts + [f'{username}@{ip}', remote_cmd]
-        ssh_result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-        if ssh_result.returncode != 0:
-            result['error'] = f'Remote install failed: {ssh_result.stderr.strip()[:200]}'
-            return result
-    except subprocess.TimeoutExpired:
-        result['error'] = 'SSH command timeout'
-        return result
-    except Exception as e:
-        result['error'] = f'SSH error: {e}'
-        return result
-    
-    result['success'] = True
-    result['message'] = f'{len(files)} files deployed'
-    return result
 
 def action_deploy_base_config():
+    # IB edition: sw-base bundle (Cumulus motd/bashrc/exa/nvc/nvt/etc) does not
+    # exist. Return a structured success-with-no-op so any stale UI call sees a
+    # clear message instead of a 500.
+    error_json("Base Config deploy is not available in the IB edition (no sw-base bundle)")
+    return  # unreachable, but keeps lint quiet
+    # ---- Legacy code below (unreachable) ----
     try:
         data = json.loads(POST_DATA)
     except Exception:
         error_json("Invalid JSON data")
-    
+
     files = data.get('files', [])
     devices = data.get('devices', [])
     disable_ztp = data.get('disable_ztp', False)
-    
-    # If no files specified, deploy all known files (skip missing ones)
+
     if not files:
         files = list(FILE_DEPLOY_MAP.keys())
-    
+
     if not devices:
         error_json("No devices selected")
-    
-    # Filter to only files that exist on disk (graceful skip)
+
     available_files = [f for f in files if f in FILE_DEPLOY_MAP and os.path.exists(os.path.join(BASE_CONFIG_DIR, f))]
     if not available_files:
         error_json("No deploy files found in " + BASE_CONFIG_DIR)
@@ -1984,6 +1850,13 @@ def action_deploy_base_config():
 # ======================== OS UPGRADE ========================
 
 def image_version_from_name(name):
+    # MLNX-OS image filenames look like e.g.
+    #   image-X86_64-3.12.0010.img, image-X86_64-3.11.2304.bin
+    # Cumulus images looked like cumulus-linux-5.4.0-mlx-amd64.bin.
+    # Try the MLNX-OS pattern first, fall back to Cumulus for legacy uploads.
+    m = re.search(r'image-[A-Za-z0-9_]+-([0-9][A-Za-z0-9._-]+?)\.(bin|img|iso)$', name)
+    if m:
+        return m.group(1)
     m = re.search(r'cumulus-linux-([0-9][A-Za-z0-9._-]*?)-', name)
     return m.group(1) if m else ''
 
@@ -2007,7 +1880,7 @@ def list_os_image_objects():
 def get_device_version(device):
     ip = device.get('ip', '')
     hostname = device.get('hostname', ip)
-    username = device.get('username', 'cumulus')
+    username = device.get('username', 'admin')
     result = {
         'ip': ip,
         'hostname': hostname,
@@ -2060,7 +1933,7 @@ def action_upgrade_candidates():
         with open(devices_file, 'r') as f:
             raw = yaml.safe_load(f) or {}
         defaults = raw.get('defaults', {})
-        default_username = defaults.get('username', 'cumulus')
+        default_username = defaults.get('username', 'admin')
         for ip, info in raw.get('devices', raw).items():
             if ip in ('defaults', 'endpoint_hosts'):
                 continue
@@ -2111,7 +1984,7 @@ def run_upgrade_precheck(device, target_version, image_name, server_ip):
             r = subprocess.run(
                 ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
                  '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-                 '-o', 'LogLevel=ERROR', f"{device.get('username','cumulus')}@{device.get('ip')}",
+                 '-o', 'LogLevel=ERROR', f"{device.get('username','admin')}@{device.get('ip')}",
                  'sudo nv config save && test -s /etc/nvue.d/startup.yaml && echo PRECHECK_OK'],
                 capture_output=True, text=True, timeout=25
             )
@@ -2182,7 +2055,7 @@ def load_upgrade_job(job_id):
 
 def start_upgrade_for_device(dev, image_url, ztp_url):
     ip = dev.get('ip')
-    username = dev.get('username', 'cumulus')
+    username = dev.get('username', 'admin')
     remote = r'''
 set -e
 IMAGE_URL="$1"
@@ -2261,6 +2134,15 @@ def update_upgrade_job(job):
     return job
 
 def action_upgrade_start():
+    # MLNX-OS image upgrade flow is different from Cumulus onie-install. The
+    # legacy code below uses cumulus@ SSH and writes an onie-install command
+    # which does not work on MLNX-OS. Until a MLNX-OS-native upgrade flow is
+    # implemented (likely `image fetch <url>` + `image install <name>` + reload)
+    # the upgrade UI is disabled to avoid pushing dangerous commands.
+    error_json("OS upgrade is not yet supported in the IB edition. Use MLNX-OS "
+               "CLI: 'image fetch <url>' then 'image install <name>'.")
+    return  # unreachable
+    # ---- Legacy Cumulus upgrade kept for reference ----
     try:
         data = json.loads(POST_DATA)
     except Exception:
@@ -2472,7 +2354,7 @@ def action_import_ssh_key():
 # ======================== OS IMAGES ========================
 
 def action_list_os_images():
-    """List Cumulus Linux image files in web root."""
+    """List OS image files in web root (MLNX-OS .img / legacy Cumulus .bin)."""
     result_json({"success": True, "images": list_os_image_objects()})
 
 def action_upload_os_image():
@@ -2699,10 +2581,15 @@ def action_list_generated_configs():
     result_json({"success": True, "configs": configs, "dir": GENERATED_CONFIGS_DIR})
 
 def action_sync_generated_configs():
-    """Copy generated configs from Ansible directory to web root."""
+    """Ansible sync is not used in the IB edition. The Provision UI shows
+    whatever YAML files are present in GENERATED_CONFIGS_DIR; admins upload
+    them directly via the action_upload_generated_config endpoint."""
+    error_json("Ansible-based config sync is not supported in the IB edition. "
+               "Upload YAML files directly from the Provision UI.")
+    return  # unreachable
+    # ---- Legacy Cumulus/Ansible sync kept for reference ----
     ansible_dir = os.environ.get('ANSIBLE_DIR', '')
     if not ansible_dir:
-        # Try reading from lldpq.conf
         try:
             with open('/etc/lldpq.conf', 'r') as f:
                 for line in f:
@@ -2713,7 +2600,7 @@ def action_sync_generated_configs():
             pass
 
     if not ansible_dir:
-        error_json("ANSIBLE_DIR not configured. Set it in /etc/lldpq.conf or configure Ansible directory in install.sh")
+        error_json("ANSIBLE_DIR not configured.")
 
     src_dir = os.path.join(ansible_dir, 'files', 'generated_config_folder')
     if not os.path.isdir(src_dir):
@@ -2804,43 +2691,30 @@ def action_upload_generated_config():
 # ======================== DEPLOY GENERATED CONFIG ========================
 
 def deploy_config_to_device(ip, hostname, server_ip):
-    """SSH into switch, curl config from web server, nv config replace/apply/save."""
-    config_url = f"http://{server_ip}/generated_config_folder/{hostname}.yaml"
-    ssh_opts = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-                '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-                '-o', 'LogLevel=ERROR']
-
-    remote_cmd = (
-        f'curl -sf {config_url} -o /tmp/startup.yaml && '
-        f'test -s /tmp/startup.yaml && '
-        f'sudo nv config replace /tmp/startup.yaml && '
-        f'sudo nv config apply -y && '
-        f'sudo nv config save && '
-        f'rm -f /tmp/startup.yaml'
-    )
-
-    try:
-        r = subprocess.run(
-            ['sudo', '-u', LLDPQ_USER, 'ssh'] + ssh_opts + [f'cumulus@{ip}', remote_cmd],
-            capture_output=True, text=True, timeout=120
-        )
-        if r.returncode == 0:
-            return {'ip': ip, 'hostname': hostname, 'success': True, 'message': 'Config applied'}
-        return {'ip': ip, 'hostname': hostname, 'success': False, 'error': r.stderr.strip()[:200] or 'Command failed'}
-    except subprocess.TimeoutExpired:
-        return {'ip': ip, 'hostname': hostname, 'success': False, 'error': 'Timeout (120s)'}
-    except Exception as e:
-        return {'ip': ip, 'hostname': hostname, 'success': False, 'error': str(e)}
+    """Cumulus deploy via NVUE replace/apply/save. The IB edition does NOT push
+    generated configs automatically: MLNX-OS 'configuration write' is interactive
+    and replacing a running-config from outside is risky. The stub returns a
+    structured 'disabled' result so the parallel executor produces uniform output."""
+    return {
+        'ip': ip,
+        'hostname': hostname,
+        'success': False,
+        'error': 'Generated-config deploy is not available in the IB edition. '
+                 'Use the MLNX-OS CLI manually: copy the file with `image fetch` '
+                 'or paste config blocks under `configure terminal`.',
+    }
 
 def action_deploy_generated_config():
-    """Deploy generated NVUE config to one or more switches via SSH."""
+    error_json("Generated-config deploy is not yet supported in the IB edition. "
+               "Push MLNX-OS config snippets via SSH/CLI manually.")
+    return  # unreachable
+    # ---- Legacy Cumulus deploy kept for reference ----
     try:
         data = json.loads(POST_DATA)
     except Exception:
         error_json("Invalid JSON data")
 
     devices = data.get('devices', [])
-    # Single device shorthand
     if not devices and data.get('hostname') and data.get('ip'):
         devices = [{'hostname': data['hostname'], 'ip': data['ip']}]
 
@@ -3027,7 +2901,7 @@ def action_rebuild_devices_yaml():
     devices_file = os.path.join(LLDPQ_DIR, 'devices.yaml')
     
     # Read existing file to preserve defaults, endpoint_hosts, and header
-    defaults_username = 'cumulus'
+    defaults_username = 'admin'
     endpoint_hosts = []
     if os.path.exists(devices_file):
         try:
