@@ -485,6 +485,21 @@
             <div class="legend-item" onclick="highlightLinkType('unexpected')" style="cursor:pointer;" title="Click to highlight unexpected links"><div class="legend-line fail"></div> Unexpected <span id="count-unexpected"></span></div>
         </div>
 
+        <div class="toggle-group" style="padding-left:12px;margin-left:8px;">
+            <label class="toggle" title="Overlay IB link-error severity onto discovered links">
+                <input type="radio" name="ibOverlay" value="none" checked onchange="setIBOverlay(this.value)">
+                <span>Base</span>
+            </label>
+            <label class="toggle" title="Highlight ports from ib_link_errors.json">
+                <input type="radio" name="ibOverlay" value="errors" onchange="setIBOverlay(this.value)">
+                <span>Link Errors</span>
+            </label>
+            <label class="toggle" title="Highlight SHARP aggregator switches">
+                <input type="radio" name="ibOverlay" value="sharp" onchange="setIBOverlay(this.value)">
+                <span>SHARP</span>
+            </label>
+        </div>
+
         <div class="spacer"></div>
         
         <span class="timestamp" id="topologyTimestamp"></span>
@@ -504,6 +519,66 @@
 
     <!-- Cytoscape application -->
     <script src="cyto-app.js"></script>
+
+    <!-- IB-specific topology overlays (link errors / SHARP) -->
+    <script>
+        async function setIBOverlay(mode) {
+            if (!window.cy && typeof cy === 'undefined') return;
+            const graph = (typeof cy !== 'undefined') ? cy : window.cy;
+            if (!graph) return;
+
+            // Reset to base colours from cyto-app.js
+            graph.edges().forEach(e => {
+                e.style({
+                    'line-color': e.data('color') || '#aaaaaa',
+                    'width': 2,
+                    'opacity': 0.8,
+                });
+            });
+            graph.nodes().forEach(n => {
+                n.style({'border-width': 0, 'border-color': '#222'});
+            });
+
+            if (mode === 'none') return;
+
+            if (mode === 'errors') {
+                try {
+                    const r = await fetch('/monitor-results/ib_link_errors.json?t=' + Date.now(), {cache:'no-store'});
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    const problems = data.problem_ports || [];
+                    problems.forEach(p => {
+                        graph.edges().forEach(e => {
+                            const match =
+                                (e.data('srcDevice') === p.device && e.data('srcIfName') === p.port) ||
+                                (e.data('tgtDevice') === p.device && e.data('tgtIfName') === p.port);
+                            if (match) {
+                                e.style({
+                                    'line-color': p.severity === 'critical' ? '#f44336' : '#ff9800',
+                                    'width': p.severity === 'critical' ? 5 : 4,
+                                    'opacity': 1,
+                                });
+                            }
+                        });
+                    });
+                } catch (e) {}
+            }
+
+            if (mode === 'sharp') {
+                try {
+                    const r = await fetch('/monitor-results/ib_sharp_status.json?t=' + Date.now(), {cache:'no-store'});
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    const names = new Set((data.nodes || []).map(n => n.hostname).filter(Boolean));
+                    graph.nodes().forEach(n => {
+                        if (names.has(n.data('label'))) {
+                            n.style({'border-width': 5, 'border-color': '#ff9800'});
+                        }
+                    });
+                } catch (e) {}
+            }
+        }
+    </script>
     
     <!-- Tooltip - must be last in body for z-index -->
     <div class="cy-tooltip" id="tooltip" style="display:none;"></div>

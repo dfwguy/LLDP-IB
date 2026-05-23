@@ -11,6 +11,10 @@
         .delta-cell.bad { color: #f44336; font-weight: 600; }
         .delta-cell.warn { color: #ff9800; font-weight: 600; }
         .delta-cell.ok { color: #888; }
+        .spark { display:flex; align-items:flex-end; gap:2px; height:24px; min-width:90px; }
+        .spark span { width:6px; background:#4fc3f7; border-radius:2px 2px 0 0; opacity:.9; }
+        .spark span.warn { background:#ff9800; }
+        .spark span.crit { background:#f44336; }
     </style>
 </head>
 <body>
@@ -65,6 +69,7 @@
                     <th class="delta-cell">XmitDiscards (Δ)</th>
                     <th>Flaps 1h</th>
                     <th>Flaps 24h</th>
+                    <th>Trend</th>
                 </tr>
             </thead>
             <tbody id="errors-table">
@@ -75,13 +80,18 @@
 
 <script>
 let allPorts = [];
+let history = {};
 
 document.addEventListener('DOMContentLoaded', loadData);
 
 async function loadData() {
     try {
-        const resp = await fetch('/monitor-results/ib_link_errors.json', {cache: 'no-store'});
+        const [resp, histResp] = await Promise.all([
+            fetch('/monitor-results/ib_link_errors.json', {cache: 'no-store'}),
+            fetch('/monitor-results/ib_link_history.json', {cache: 'no-store'}).catch(() => null),
+        ]);
         const data = await resp.json();
+        if (histResp && histResp.ok) history = await histResp.json();
         allPorts = data.problem_ports || [];
         const s = data.summary || {};
         document.getElementById('last-updated').textContent = data.last_update
@@ -154,8 +164,23 @@ function renderTable() {
             ${cell('PortXmitDiscards')}
             <td>${p.flaps_1h || 0}</td>
             <td>${p.flaps_24h || 0}</td>
+            <td>${trendCell(p)}</td>
         </tr>`;
     }).join('');
+}
+
+function trendCell(p) {
+    const key = `${p.device}:${p.port}`;
+    const samples = history.samples && history.samples[key];
+    if (!samples) return '<span style="color:#666;">-</span>';
+    const vals = samples.symbol_errors || samples.link_downed || samples.rcv_errors || [];
+    if (!vals.length) return '<span style="color:#666;">-</span>';
+    const max = Math.max(...vals, 1);
+    return `<div class="spark" title="${key}: ${vals.join(' → ')}">` + vals.slice(-12).map(v => {
+        const h = Math.max(2, Math.round((v / max) * 24));
+        const cls = v > max * 0.75 ? 'crit' : v > max * 0.35 ? 'warn' : '';
+        return `<span class="${cls}" style="height:${h}px"></span>`;
+    }).join('') + '</div>';
 }
 </script>
 </body>

@@ -93,7 +93,7 @@ COPY tests/ /home/lldpq/tests/
 # The entrypoint copies this baseline into the runtime volume only when
 # LLDPQ_DEMO=true. We also pre-bake topology.js so the cytoscape view is
 # populated on first page load (without waiting for any cron pass).
-RUN mkdir -p /opt/lldpq-demo \
+RUN mkdir -p /opt/lldpq-demo/monitor-results/snapshots \
     && python3 /home/lldpq/tests/generate_demo_data.py \
         --target /opt/lldpq-demo/monitor-results \
         --web-root /opt/lldpq-demo \
@@ -101,6 +101,17 @@ RUN mkdir -p /opt/lldpq-demo \
     && python3 /home/lldpq/lldpq/generate_ib_topology.py \
         --lldpq-dir /opt/lldpq-demo \
         --web-root  /opt/lldpq-demo \
+    && cd /opt/lldpq-demo \
+    && python3 /home/lldpq/lldpq/generate_hardware_html.py \
+    && python3 /home/lldpq/lldpq/process_log_data.py \
+    && python3 -c "import json, os, datetime; \
+        mr='/opt/lldpq-demo/monitor-results'; \
+        load=lambda n: (json.load(open(os.path.join(mr,n))) if os.path.exists(os.path.join(mr,n)) else None); \
+        ts=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'); \
+        snap={'generated_at':ts,'ib_topology':load('ib_topology.json'),'ib_sm_status':load('ib_sm_status.json'),'ib_link_errors':load('ib_link_errors.json'),'ib_pkey':load('ib_pkey.json'),'transceiver_inventory':load('transceiver_inventory.json'),'log_summary':load('log_summary.json')}; \
+        fn=os.path.join(mr,'snapshots','lldpq-ib-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '.json'); \
+        open(fn,'w').write(json.dumps(snap, separators=(',',':'))); \
+        print('demo snapshot:', fn)" \
     && chown -R lldpq:www-data /opt/lldpq-demo \
     && find /opt/lldpq-demo -type d -exec chmod 775 {} \; \
     && find /opt/lldpq-demo -type f -exec chmod 664 {} \;

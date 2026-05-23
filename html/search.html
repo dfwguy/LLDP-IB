@@ -6,18 +6,45 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <script src="css/lldpq-ib.js"></script>
     <style>
-        .search-box { display: flex; gap: 10px; align-items: center; margin-bottom: 25px; }
-        .search-box input { flex: 1; padding: 12px 16px; background: #2d2d2d; border: 1px solid #404040; color: #fff; border-radius: 6px; font-size: 16px; font-family: 'Cascadia Code', Consolas, monospace; }
-        .search-box input:focus { border-color: #76b900; outline: none; }
-        .search-hint { color: #888; font-size: 12px; margin-bottom: 15px; }
-        .result-section { background: #252526; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
-        .result-section h3 { color: #76b900; font-size: 14px; margin-bottom: 12px; }
-        .kv-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; align-items: center; font-size: 13px; }
-        .kv-grid .k { color: #888; }
-        .kv-grid .v { color: #d4d4d4; }
-        .link-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-        .link-row { padding: 8px 10px; background: #1a1a1a; border-radius: 4px; display: flex; gap: 12px; align-items: center; font-size: 13px; }
+        .search-toolbar {
+            display: flex; gap: 10px; align-items: center;
+            margin-bottom: 18px; flex-wrap: wrap;
+        }
+        .search-toolbar input[type="text"] {
+            flex: 1; min-width: 320px;
+            padding: 12px 16px; background: #2d2d2d; border: 1px solid #404040;
+            color: #fff; border-radius: 6px; font-size: 15px;
+            font-family: 'Cascadia Code', Consolas, monospace;
+        }
+        .search-toolbar input[type="text"]:focus { border-color: #76b900; outline: none; }
+        .search-toolbar select {
+            padding: 10px 14px; background: #2d2d2d; border: 1px solid #404040;
+            color: #fff; border-radius: 6px; font-size: 13px;
+        }
+        .search-hint {
+            color: #888; font-size: 12px; margin: -10px 0 18px;
+            display: flex; gap: 16px; flex-wrap: wrap;
+        }
+        .search-hint code {
+            background: #1a1a1a; padding: 1px 6px; border-radius: 3px;
+            color: #dcdcaa; font-family: 'Cascadia Code', Consolas, monospace;
+        }
+        .result-group { background: #252526; border-radius: 6px; padding: 14px 18px; margin-bottom: 14px; }
+        .result-group h3 {
+            color: #76b900; font-size: 13px; margin-bottom: 10px;
+            display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .empty-results {
+            background: #252526; border-radius: 6px; padding: 50px 20px;
+            text-align: center; color: #888;
+        }
+        .empty-results h3 { color: #aaa; margin-bottom: 6px; }
+        td.actions a {
+            color: #4fc3f7; text-decoration: none; font-size: 12px; margin-right: 10px;
+        }
+        td.actions a:hover { color: #76b900; }
     </style>
 </head>
 <body>
@@ -26,115 +53,293 @@
             <div class="page-title">IB Search</div>
             <div class="last-updated" id="last-updated"></div>
         </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="performSearch()">Search</button>
+            <button class="btn btn-primary"   onclick="downloadCSV()">Download CSV</button>
+        </div>
     </div>
 
-    <div class="search-hint">Search by <strong>GUID</strong> (0x... or last hex segment), <strong>LID</strong> (decimal), or <strong>description</strong> (hostname / port label).</div>
+    <div class="search-toolbar">
+        <input type="text" id="q"
+               placeholder="GUID  ·  LID  ·  hostname  ·  port (IB1/12)  ·  pkey  ·  IP"
+               oninput="performSearch()" onkeydown="if(event.key==='Enter')performSearch()"
+               autocomplete="off">
+        <select id="filter-kind" onchange="performSearch()">
+            <option value="">All scopes</option>
+            <option value="device">Devices</option>
+            <option value="link">Links / ports</option>
+            <option value="pkey">P_Keys</option>
+        </select>
+    </div>
+    <div class="search-hint">
+        <span><code>0x0002c903...</code> GUID prefix</span>
+        <span><code>5</code> exact LID</span>
+        <span><code>ib-spine-01</code> hostname substring</span>
+        <span><code>IB1/12</code> port id</span>
+        <span><code>0x8001</code> P_Key</span>
+    </div>
 
-    <div class="search-box">
-        <input type="text" id="q" placeholder="e.g. 0x0002c90300abc100, 1, qm-spine01" oninput="performSearch()" autocomplete="off">
+    <div class="summary-grid" id="summary" style="display:none;">
+        <div class="summary-card card-total"><div class="card-value" id="match-devices">0</div><div class="card-label">Matched Devices</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="match-links">0</div><div class="card-label">Matched Links</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="match-pkeys">0</div><div class="card-label">Matched P_Keys</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="search-time">0 ms</div><div class="card-label">Query Time</div></div>
     </div>
 
     <div id="results">
-        <div class="no-data"><h3>Type to search</h3><p>Searches the IB topology JSON. Results show matching nodes and all their links.</p></div>
+        <div class="empty-results">
+            <h3>Type to search</h3>
+            <p>Search across the IB topology (nodes + links) and partition table. Cross-references your <code>devices.yaml</code> + <code>assets.ini</code> + UFM (if configured).</p>
+        </div>
     </div>
 
 <script>
 let topo = null;
+let assets = {};      // hostname -> {ip, model, serial, release, os, uptime}
+let pkey = null;
+let allMatches = { devices: [], links: [], pkeys: [] };
 
-document.addEventListener('DOMContentLoaded', loadTopology);
+document.addEventListener('DOMContentLoaded', loadData);
 
-async function loadTopology() {
+async function loadData() {
     try {
-        const resp = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
-        topo = await resp.json();
-        document.getElementById('last-updated').textContent = topo.last_update
-            ? 'Topology data from: ' + new Date(topo.last_update).toLocaleString('sv-SE').replace('T', ' ')
-            : '';
+        const [topoR, assetsR, pkeyR] = await Promise.all([
+            fetch('/monitor-results/ib_topology.json', {cache:'no-store'}).catch(()=>null),
+            fetch('/assets.ini',                       {cache:'no-store'}).catch(()=>null),
+            fetch('/monitor-results/ib_pkey.json',     {cache:'no-store'}).catch(()=>null),
+        ]);
+        topo = topoR && topoR.ok ? await topoR.json() : { nodes: [], links: [] };
+        pkey = pkeyR && pkeyR.ok ? await pkeyR.json() : { pkeys: {}, per_device: {} };
+
+        if (assetsR && assetsR.ok) {
+            const text = await assetsR.text();
+            for (const line of text.split('\n')) {
+                if (!line || line.startsWith('#')) continue;
+                const parts = line.split('\t');
+                if (parts.length < 2) continue;
+                const [hostname, ip, model, serial, release, os, uptime] = parts;
+                assets[hostname] = { ip, model, serial, release, os, uptime };
+            }
+        }
+
+        document.getElementById('last-updated').textContent =
+            'Topology: ' + (topo.generated_at || 'unknown') + '  ·  ' +
+            (Object.keys(assets).length) + ' devices in assets.ini';
+
+        document.getElementById('q').focus();
     } catch (e) {
         document.getElementById('results').innerHTML =
-            '<div class="no-data"><h3>Topology not loaded</h3><p>Run the IB monitor first.</p></div>';
+            `<div class="empty-results"><h3>Failed to load search data</h3><p>${e.message}</p></div>`;
     }
 }
 
 function performSearch() {
-    const q = document.getElementById('q').value.trim().toLowerCase();
+    const q = document.getElementById('q').value.trim();
+    const kind = document.getElementById('filter-kind').value;
+    const sum = document.getElementById('summary');
+
     if (!q) {
+        sum.style.display = 'none';
         document.getElementById('results').innerHTML =
-            '<div class="no-data"><h3>Type to search</h3></div>';
+            `<div class="empty-results"><h3>Type to search</h3>
+             <p>Search across the IB topology (nodes + links) and partition table.</p></div>`;
+        allMatches = { devices: [], links: [], pkeys: [] };
         return;
     }
-    if (!topo) return;
 
-    // Match nodes by GUID prefix, LID, or description substring
-    const matches = (topo.nodes || []).filter(n => {
-        if ((n.guid || '').toLowerCase().includes(q)) return true;
+    const t0 = performance.now();
+    const ql = q.toLowerCase();
+
+    // ----- Devices -----
+    const devices = (topo.nodes || []).filter(n => {
+        if (!q) return false;
+        if ((n.guid || '').toLowerCase().includes(ql)) return true;
         if (String(n.lid || '') === q) return true;
-        if ((n.description || '').toLowerCase().includes(q)) return true;
+        if ((n.description || n.hostname || '').toLowerCase().includes(ql)) return true;
+        // Cross-reference assets.ini for IP / model / serial / OS
+        const h = n.description || n.hostname || '';
+        const a = assets[h];
+        if (a) {
+            if ((a.ip || '').toLowerCase().includes(ql)) return true;
+            if ((a.serial || '').toLowerCase().includes(ql)) return true;
+            if ((a.model || '').toLowerCase().includes(ql)) return true;
+        }
         return false;
     });
 
-    const results = document.getElementById('results');
-    if (matches.length === 0) {
-        results.innerHTML = '<div class="no-data"><h3>No matches</h3><p>Try a different GUID, LID, or hostname.</p></div>';
-        return;
+    // ----- Links -----
+    const links = (topo.links || []).filter(l => {
+        if ((l.source_desc || '').toLowerCase().includes(ql)) return true;
+        if ((l.target_desc || '').toLowerCase().includes(ql)) return true;
+        if ((l.source_guid || '').toLowerCase().includes(ql)) return true;
+        if ((l.target_guid || '').toLowerCase().includes(ql)) return true;
+        const sp = `IB1/${l.source_port}`.toLowerCase();
+        const tp = `IB1/${l.target_port}`.toLowerCase();
+        if (sp === ql || tp === ql) return true;
+        if (sp.includes(ql) || tp.includes(ql)) return true;
+        if ((l.speed || '').toLowerCase().includes(ql)) return true;
+        return false;
+    });
+
+    // ----- P_Keys -----
+    const pkeyMatches = [];
+    const pks = (pkey && pkey.pkeys) || {};
+    for (const [name, info] of Object.entries(pks)) {
+        if (name.toLowerCase().includes(ql)
+            || (info.name || '').toLowerCase().includes(ql)) {
+            pkeyMatches.push({ pkey: name, ...info });
+        }
     }
 
-    results.innerHTML = matches.map(node => renderNode(node)).join('');
+    allMatches = { devices, links, pkeys: pkeyMatches };
+    const t1 = performance.now();
+    const ms = Math.round(t1 - t0);
+
+    sum.style.display = '';
+    document.getElementById('match-devices').textContent = devices.length;
+    document.getElementById('match-links').textContent   = links.length;
+    document.getElementById('match-pkeys').textContent   = pkeyMatches.length;
+    document.getElementById('search-time').textContent   = ms + ' ms';
+
+    render(kind);
 }
 
-function renderNode(node) {
-    const links = (topo.links || []).filter(l =>
-        l.source_guid === node.guid || l.target_guid === node.guid);
+function render(kindFilter) {
+    const { devices, links, pkeys } = allMatches;
+    let html = '';
 
-    const linksHtml = links.length === 0
-        ? '<div style="color:#888;font-size:12px;">No links recorded</div>'
-        : `<div class="link-list">${links.map(l => renderLink(l, node.guid)).join('')}</div>`;
+    const showDevices = (!kindFilter || kindFilter === 'device');
+    const showLinks   = (!kindFilter || kindFilter === 'link');
+    const showPkeys   = (!kindFilter || kindFilter === 'pkey');
 
-    const typeBadge = node.type === 'switch'
-        ? '<span class="badge badge-green">SWITCH</span>'
-        : node.type === 'hca'
-            ? '<span class="badge badge-blue">HCA</span>'
-            : `<span class="badge badge-gray">${(node.type||'').toUpperCase()}</span>`;
+    if (showDevices && devices.length) html += renderDevices(devices);
+    if (showLinks   && links.length)   html += renderLinks(links);
+    if (showPkeys   && pkeys.length)   html += renderPkeys(pkeys);
 
-    return `
-        <div class="result-section">
-            <h3>${node.description || '(no description)'} ${typeBadge}</h3>
-            <div class="kv-grid">
-                <div class="k">GUID</div><div class="v mono">${node.guid}</div>
-                <div class="k">LID</div><div class="v">${node.lid != null ? node.lid : '-'}</div>
-                <div class="k">Type</div><div class="v">${node.type || '-'}</div>
-                <div class="k">Links</div><div class="v">${links.length}</div>
-            </div>
-            <h3 style="margin-top: 16px;">Connections (${links.length})</h3>
-            ${linksHtml}
-        </div>`;
+    if (!html) {
+        html = '<div class="empty-results"><h3>No matches</h3>'
+             + '<p>Try a different GUID prefix, LID, hostname, port id, or P_Key.</p></div>';
+    }
+
+    document.getElementById('results').innerHTML = html;
 }
 
-function renderLink(link, ownGuid) {
-    // Determine which side is "remote" from our point of view
-    const isLocalSource = link.source_guid === ownGuid;
-    const localPort = isLocalSource ? link.source_port : link.target_port;
-    const remoteGuid = isLocalSource ? link.target_guid : link.source_guid;
-    const remotePort = isLocalSource ? link.target_port : link.source_port;
-    const remoteDesc = isLocalSource ? link.target_desc : link.source_desc;
-    const remoteType = isLocalSource ? link.target_type : link.source_type;
+function renderDevices(list) {
+    const rows = list.map(n => {
+        const h = n.description || n.hostname || '?';
+        const a = assets[h] || {};
+        const typeBadge = n.type === 'switch'
+            ? '<span class="badge badge-green">switch</span>'
+            : n.type === 'hca'
+              ? '<span class="badge badge-blue">hca</span>'
+              : `<span class="badge badge-gray">${(n.type || '').toLowerCase()}</span>`;
+        return `<tr>
+            <td>${typeBadge}</td>
+            <td><strong>${esc(h)}</strong></td>
+            <td class="mono" style="font-size:11px;">${esc(n.guid || '')}</td>
+            <td>${n.lid != null ? n.lid : '-'}</td>
+            <td>${esc(a.ip || '-')}</td>
+            <td>${esc(a.model || '-')}</td>
+            <td class="actions">
+                <a href="device.html?device=${encodeURIComponent(h)}" target="_top">Open</a>
+                <a href="tracepath.html?from=${encodeURIComponent(h)}" target="_top">Trace</a>
+            </td>
+        </tr>`;
+    }).join('');
+    return `<div class="result-group">
+        <h3>Devices (${list.length})</h3>
+        <div class="table-container"><table class="data-table">
+            <thead><tr>
+                <th>Type</th><th>Hostname</th><th>GUID</th><th>LID</th>
+                <th>IP</th><th>Model</th><th>Actions</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>
+    </div>`;
+}
 
-    const remoteBadge = remoteType === 'switch'
-        ? '<span class="badge badge-green">switch</span>'
-        : remoteType === 'hca'
-            ? '<span class="badge badge-blue">hca</span>'
-            : `<span class="badge badge-gray">${remoteType || ''}</span>`;
+function renderLinks(list) {
+    const rows = list.map(l => `<tr>
+        <td><strong>${esc(l.source_desc || '?')}</strong></td>
+        <td class="mono">IB1/${esc(l.source_port)}</td>
+        <td style="color:#666;">↔</td>
+        <td><strong>${esc(l.target_desc || '?')}</strong></td>
+        <td class="mono">IB1/${esc(l.target_port)}</td>
+        <td><span class="badge badge-yellow">${esc(l.speed || '?')}</span></td>
+    </tr>`).join('');
+    return `<div class="result-group">
+        <h3>Links (${list.length})</h3>
+        <div class="table-container"><table class="data-table">
+            <thead><tr>
+                <th>Source</th><th>Port</th><th></th><th>Target</th><th>Port</th><th>Speed</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>
+    </div>`;
+}
 
-    return `
-        <div class="link-row">
-            <span class="mono badge badge-purple">port ${localPort}</span>
-            <span style="color:#666">→</span>
-            ${remoteBadge}
-            <span><strong>${remoteDesc || '(unnamed)'}</strong></span>
-            <span class="mono" style="color:#888;">port ${remotePort}</span>
-            <span class="mono" style="color:#666; font-size:11px; margin-left:auto;">${remoteGuid}</span>
-            <span class="badge badge-yellow">${link.speed || '?'}</span>
-        </div>`;
+function renderPkeys(list) {
+    const rows = list.map(p => `<tr>
+        <td class="mono">${esc(p.pkey)}</td>
+        <td><strong>${esc(p.name || '')}</strong></td>
+        <td>${p.member_count || (p.members || []).length}</td>
+        <td>${esc(p.type || '')}</td>
+    </tr>`).join('');
+    return `<div class="result-group">
+        <h3>P_Keys (${list.length})</h3>
+        <div class="table-container"><table class="data-table">
+            <thead><tr>
+                <th>P_Key</th><th>Name</th><th>Members</th><th>Type</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>
+    </div>`;
+}
+
+function downloadCSV() {
+    const lines = ['scope,key,name,detail'];
+    for (const d of allMatches.devices) {
+        const h = d.description || '';
+        const a = assets[h] || {};
+        lines.push(csv(['device', d.guid || '', h, `${d.type || ''} LID=${d.lid} IP=${a.ip || ''} model=${a.model || ''}`]));
+    }
+    for (const l of allMatches.links) {
+        lines.push(csv(['link', `${l.source_guid}-${l.target_guid}`,
+            `${l.source_desc}:IB1/${l.source_port} ↔ ${l.target_desc}:IB1/${l.target_port}`,
+            l.speed || '']));
+    }
+    for (const p of allMatches.pkeys) {
+        lines.push(csv(['pkey', p.pkey, p.name || '',
+            `members=${p.member_count || (p.members || []).length} type=${p.type || ''}`]));
+    }
+    const blob = new Blob([lines.join('\n')], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `lldpq-ib-search-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function csv(arr) {
+    return arr.map(c => {
+        const s = String(c ?? '');
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',');
+}
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+// Pre-fill from URL ?q=...
+const urlQ = new URLSearchParams(location.search).get('q');
+if (urlQ) {
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('q').value = urlQ;
+        setTimeout(performSearch, 200);
+    });
 }
 </script>
 </body>

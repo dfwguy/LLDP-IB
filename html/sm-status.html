@@ -6,6 +6,20 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <style>
+        .timeline-wrap { margin: 18px 0; background:#252526; border-radius:6px; padding:14px 16px; }
+        .timeline-wrap h3 { color:#76b900; font-size:14px; margin:0 0 10px; }
+        .sm-timeline { display:flex; align-items:flex-end; gap:2px; height:58px; padding:6px 0; border-bottom:1px solid #333; }
+        .sm-sample { flex:1; min-width:4px; border-radius:2px 2px 0 0; background:#4caf50; height:34px; cursor:pointer; }
+        .sm-sample.warn { background:#ff9800; }
+        .sm-sample.crit { background:#f44336; }
+        .sm-sample.no-standby { opacity:.75; }
+        .timeline-legend { display:flex; gap:14px; color:#888; font-size:11px; margin-top:8px; flex-wrap:wrap; }
+        .timeline-legend span::before { content:''; display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+        .timeline-legend .ok::before { background:#4caf50; }
+        .timeline-legend .warn::before { background:#ff9800; }
+        .timeline-legend .crit::before { background:#f44336; }
+    </style>
 </head>
 <body>
     <div class="page-header">
@@ -22,6 +36,16 @@
         <div class="summary-card card-info"><div class="card-value" id="standby-count">-</div><div class="card-label">Standby SMs</div></div>
         <div class="summary-card card-total"><div class="card-value" id="total-sms">-</div><div class="card-label">Total SMs</div></div>
         <div class="summary-card card-warning"><div class="card-value" id="disagreement-count">-</div><div class="card-label">Master Disagreements</div></div>
+    </div>
+
+    <div class="timeline-wrap">
+        <h3>SM Health Timeline (last samples)</h3>
+        <div class="sm-timeline" id="sm-timeline"><div class="loading">Loading history...</div></div>
+        <div class="timeline-legend">
+            <span class="ok">OK</span>
+            <span class="warn">Disagreement / no standby</span>
+            <span class="crit">No master / multi-master</span>
+        </div>
     </div>
 
     <div class="table-container">
@@ -62,13 +86,38 @@ document.addEventListener('DOMContentLoaded', loadSM);
 
 async function loadSM() {
     try {
-        const resp = await fetch('/monitor-results/ib_sm_status.json', {cache: 'no-store'});
+        const [resp, histResp] = await Promise.all([
+            fetch('/monitor-results/ib_sm_status.json', {cache: 'no-store'}),
+            fetch('/monitor-results/ib_sm_history.json', {cache: 'no-store'}).catch(() => null),
+        ]);
         const data = await resp.json();
         render(data);
+        if (histResp && histResp.ok) {
+            renderHistory(await histResp.json());
+        } else {
+            document.getElementById('sm-timeline').innerHTML = '<div style="color:#888;">No SM history yet. It is created after the next monitor pass.</div>';
+        }
     } catch (e) {
         document.getElementById('sm-table').innerHTML =
             '<tr><td colspan="5"><div class="no-data"><h3>No SM data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
     }
+}
+
+function renderHistory(data) {
+    const samples = (data.history || []).slice(-72); // last 12h at 10-min cadence
+    const el = document.getElementById('sm-timeline');
+    if (!samples.length) {
+        el.innerHTML = '<div style="color:#888;">No SM history yet.</div>';
+        return;
+    }
+    el.innerHTML = samples.map(s => {
+        let cls = 'sm-sample';
+        if (!s.has_master || s.master_count > 1) cls += ' crit';
+        else if ((s.disagreements || 0) > 0 || !s.has_redundancy) cls += ' warn';
+        if (!s.has_redundancy) cls += ' no-standby';
+        const title = `${s.ts}\nmaster=${s.master_guid || 'none'}\nmasters=${s.master_count}, standby=${s.standby_count}, disagreements=${s.disagreements}`;
+        return `<div class="${cls}" title="${title}"></div>`;
+    }).join('');
 }
 
 function render(data) {

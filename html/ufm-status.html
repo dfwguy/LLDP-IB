@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <script src="css/lldpq-ib.js"></script>
     <style>
         .ufm-section { background: #252526; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
         .ufm-section h3 { color: #76b900; font-size: 14px; margin-bottom: 12px; }
@@ -240,7 +241,13 @@ async function saveUfmConfig() {
 }
 
 async function clearUfmConfig() {
-    if (!confirm('Clear UFM settings from /etc/lldpq.conf? UFM features will go offline until reconfigured.')) return;
+    const ok = await LLDPqUI.confirm({
+        title: 'Clear UFM settings',
+        message: 'Clear UFM settings from <code>/etc/lldpq.conf</code>? UFM features will go offline until reconfigured.',
+        confirmText: 'Clear',
+        danger: true
+    });
+    if (!ok) return;
     document.getElementById('cfg-url').value = '';
     document.getElementById('cfg-user').value = '';
     document.getElementById('cfg-pass').value = '';

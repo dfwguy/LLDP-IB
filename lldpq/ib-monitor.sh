@@ -327,6 +327,44 @@ if [ -f "$SCRIPT_DIR/generate_ib_topology.py" ]; then
 fi
 
 # ============================================================================
+# Archive snapshot -- write a point-in-time JSON to monitor-results/snapshots/
+# so the Discovery Archive page can rewind state. Keeps the most recent 50.
+# ============================================================================
+SNAPSHOTS_DIR="$SCRIPT_DIR/monitor-results/snapshots"
+mkdir -p "$SNAPSHOTS_DIR"
+SNAPSHOT_TS=$(date '+%Y%m%d-%H%M%S')
+SNAPSHOT_FILE="$SNAPSHOTS_DIR/lldpq-ib-${SNAPSHOT_TS}.json"
+python3 - "$SCRIPT_DIR/monitor-results" "$SNAPSHOT_FILE" <<'PYSNAP' 2>/dev/null || true
+import json, os, sys, datetime
+mr, out = sys.argv[1], sys.argv[2]
+def load(name):
+    p = os.path.join(mr, name)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception:
+        return None
+snap = {
+    "generated_at":    datetime.datetime.now(datetime.timezone.utc)
+                          .strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "ib_topology":     load("ib_topology.json"),
+    "ib_sm_status":    load("ib_sm_status.json"),
+    "ib_link_errors":  load("ib_link_errors.json"),
+    "ib_pkey":         load("ib_pkey.json"),
+    "transceiver_inventory": load("transceiver_inventory.json"),
+    "log_summary":     load("log_summary.json"),
+}
+with open(out, "w") as f:
+    json.dump(snap, f, separators=(",", ":"))
+PYSNAP
+# Rotate: keep most recent 50 snapshots
+if command -v ls >/dev/null 2>&1; then
+    ls -1t "$SNAPSHOTS_DIR"/lldpq-ib-*.json 2>/dev/null | tail -n +51 | xargs -r rm -f
+fi
+
+# ============================================================================
 # Publish results to web root
 # ============================================================================
 if [ -n "$WEB_ROOT" ] && [ -d "$WEB_ROOT" ]; then

@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>..::LLDPQ::..</title>
+    <title>..::LLDPQ-IB:: Configs</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <script src="/css/jszip.min.js"></script>
+    <script src="/css/lldpq-ib.js"></script>
     <style>
         /* Prevent browser autofill from changing input background */
         input:-webkit-autofill,
@@ -424,14 +425,14 @@
                 </div>
                 <div class="action-buttons">
                     <div class="format-selector" id="formatSelector" style="display: none;">
-                        <button class="format-btn active" data-format="txt" onclick="selectFormat('txt')">NV-SET</button>
-                        <button class="format-btn" data-format="yaml" onclick="selectFormat('yaml')">YAML</button>
+                    <button class="format-btn active" data-format="txt" onclick="selectFormat('txt')">Running Config</button>
+                    <button class="format-btn" data-format="yaml" onclick="selectFormat('yaml')">Raw</button>
                     </div>
                     <button class="btn" onclick="runValidate()" id="btn-validate" style="background: #0097a7; color: #fff; display: none;">
                         <svg viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                         </svg>
-                        Validate
+                        Diff
                     </button>
                     <button class="btn" onclick="collectConfigs()" id="btn-collect" style="background: #ff9800; color: #000; font-weight: bold;">
                         <svg viewBox="0 0 24 24" fill="currentColor">
@@ -443,13 +444,13 @@
                         <svg viewBox="0 0 24 24" fill="currentColor">
                             <path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
                         </svg>
-                        Download All NV-SET
+                        Download All Configs
                     </button>
                     <button class="btn btn-secondary" onclick="downloadAllConfigs('yaml')" id="download-yaml">
                         <svg viewBox="0 0 24 24" fill="currentColor">
                             <path d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"/>
                         </svg>
-                        Download All YAML
+                        Download All Raw
                     </button>
                 </div>
             </div>
@@ -717,7 +718,11 @@
             document.getElementById('contentTitle').textContent = device;
             document.getElementById('contentSubtitle').textContent = 'Configuration file';
             document.getElementById('formatSelector').style.display = 'flex';
-            document.getElementById('btn-validate').style.display = 'flex';
+            // IB edition does not use Ansible/NVUE validation. Keep the
+            // validation button hidden; config drift is inspected via the
+            // collected MLNX-OS running-config files and the Device page's
+            // `show running-config diff` command runner.
+            document.getElementById('btn-validate').style.display = 'none';
             
             // Load config
             loadConfig();
@@ -739,69 +744,19 @@
         
         async function runValidate() {
             if (!selectedDevice) {
-                alert('Please select a device first');
+                showValidateModal('No device selected', '<div style="color:#ff9800;">Please select a device first.</div>', 'warning');
                 return;
             }
-            
-            showLoading(`Validating ${selectedDevice}...`);
-            
-            try {
-                const response = await fetch(`/edit-config?action=validate&devices=${encodeURIComponent(selectedDevice)}`);
-                const data = await response.json();
-                
-                hideLoading();
-                
-                if (!data.success) {
-                    showValidateModal('Validation Error', `<div style="color: #f44336;">${data.error || 'Unknown error'}</div>`, 'error');
-                    return;
-                }
-                
-                const result = data.result;
-                const summary = result.summary;
-                const isValid = result.valid;
-                const statusColor = isValid ? '#76b900' : '#f44336';
-                const statusIcon = isValid ? '✓' : '✗';
-                
-                let html = '<div style="font-family: monospace; font-size: 13px;">';
-                
-                // Summary
-                html += `<div style="padding: 15px; background: ${isValid ? 'rgba(118,185,0,0.1)' : 'rgba(244,67,54,0.1)'}; border-radius: 8px; margin-bottom: 15px; border: 1px solid ${statusColor};">`;
-                html += `<div style="font-size: 18px; color: ${statusColor}; margin-bottom: 10px;">${statusIcon} ${isValid ? 'Configuration Valid' : 'Validation Issues Found'}</div>`;
-                html += `<div style="color: #ccc;">`;
-                html += `<div>Device: <span style="color: #4fc3f7; font-weight: bold;">${selectedDevice}</span></div>`;
-                html += `<div>Issues: <span style="color: #f44336;">${summary.total_errors} errors</span>, <span style="color: #ff9800;">${summary.total_warnings} warnings</span></div>`;
-                html += '</div></div>';
-                
-                // File issues
-                const filesWithIssues = result.files.filter(f => f.issues && f.issues.length > 0);
-                if (filesWithIssues.length > 0) {
-                    filesWithIssues.forEach(file => {
-                        file.issues.forEach(issue => {
-                            const sevColor = issue.severity === 'ERROR' ? '#f44336' : '#ff9800';
-                            html += `<div style="margin-bottom: 8px; border-left: 2px solid ${sevColor}; padding-left: 10px;">`;
-                            html += `<span style="color: ${sevColor}; font-weight: bold;">[${issue.severity}]</span> `;
-                            html += `<span style="color: #888;">${issue.path}:</span> `;
-                            html += `<span style="color: #ddd;">${issue.message}</span>`;
-                            if (issue.suggestion) {
-                                html += `<div style="color: #999; font-style: italic;">→ ${issue.suggestion}</div>`;
-                            }
-                            html += '</div>';
-                        });
-                    });
-                }
-                
-                html += '</div>';
-                
-                showValidateModal(
-                    isValid ? 'Validation Passed' : 'Validation Results',
-                    html,
-                    isValid ? 'success' : 'warning'
-                );
-                
-            } catch (e) {
-                hideLoading();
-                showValidateModal('Error', `<div style="color: #f44336;">Failed to validate: ${e.message}</div>`, 'error');
-            }
+            showValidateModal(
+                'Validation not used in IB edition',
+                `<div style="color:#d4d4d4;line-height:1.6;">
+                    LLDPq-IB is monitoring-only and does not use Ansible/NVUE
+                    validation. To inspect MLNX-OS changes, open
+                    <strong>Devices → Details → Command Runner</strong> and run
+                    <code>show running-config diff</code>.
+                </div>`,
+                'warning'
+            );
         }
         
         function selectFormat(format) {
@@ -949,7 +904,11 @@
             const formatFiles = files.filter(file => file.endsWith(`.${format}`));
             
             if (formatFiles.length === 0) {
-                alert(`No ${format.toUpperCase()} files found.`);
+                LLDPqUI.alert({
+                    title: 'No files found',
+                    message: `No ${format.toUpperCase()} config files found yet. Click <strong>Collect Configs</strong> first, then try again.`,
+                    type: 'warning'
+                });
                 return;
             }
             
@@ -1030,7 +989,11 @@
                 text.textContent = 'Collect Configs';
                 btn.disabled = false;
                 btn.style.opacity = '1';
-                alert('Error: ' + e.message);
+                LLDPqUI.alert({
+                    title: 'Config collection failed',
+                    message: e.message,
+                    type: 'error'
+                });
             }
         }
 

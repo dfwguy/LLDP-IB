@@ -264,6 +264,49 @@
         }
 
         .conditional-hide { display: none; }
+
+        /* Quick Tools launcher (top-of-page navigation) */
+        .quick-tools {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 22px;
+        }
+        .quick-tools .tool-card {
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 18px 14px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #d4d4d4;
+            text-decoration: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+        .quick-tools .tool-card:hover {
+            background: #353535;
+            border-color: #76b900;
+            transform: translateY(-2px);
+        }
+        .quick-tools .tool-card svg {
+            width: 28px;
+            height: 28px;
+            color: #76b900;
+        }
+        .quick-tools .tool-card .tool-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .quick-tools .tool-card .tool-desc {
+            font-size: 11px;
+            color: #888;
+            line-height: 1.3;
+        }
     </style>
 </head>
 <body>
@@ -276,6 +319,40 @@
                 <img src="/png/lldpq-banner.png" alt="LLDPq-IB" onerror="this.style.display='none'">
             </div>
             <div class="last-updated" id="last-updated">Loading...</div>
+        </div>
+
+        <!-- Quick Tools launcher -->
+        <div class="quick-tools">
+            <a class="tool-card" onclick="navTo('provision.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+                <span class="tool-label">Provision</span>
+                <span class="tool-desc">DHCP / ZTP / Devices</span>
+            </a>
+            <a class="tool-card" onclick="navTo('search.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
+                <span class="tool-label">Search</span>
+                <span class="tool-desc">GUID / LID / device</span>
+            </a>
+            <a class="tool-card" onclick="navTo('tracepath.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+                <span class="tool-label">Tracepath</span>
+                <span class="tool-desc">Path between endpoints</span>
+            </a>
+            <a class="tool-card" onclick="navTo('topology/main.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M6 9v3l6 3 6-3V9"/></svg>
+                <span class="tool-label">Topology</span>
+                <span class="tool-desc">Interactive graph</span>
+            </a>
+            <a class="tool-card" onclick="navTo('lldp.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/><line x1="13" y1="7" x2="22" y2="7"/></svg>
+                <span class="tool-label">Wiring Check</span>
+                <span class="tool-desc">Expected vs actual</span>
+            </a>
+            <a class="tool-card" onclick="navTo('telemetry.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3.5 18.5 9.5 12.5 13.5 16.5 22 6.92"/></svg>
+                <span class="tool-label">Telemetry</span>
+                <span class="tool-desc">BER + UFM history</span>
+            </a>
         </div>
 
         <!-- UFM banner -->
@@ -422,6 +499,58 @@
                 <div class="summary-card card-warning" onclick="navTo('transceiver.html')">
                     <div class="card-value status-warning" id="xc-mixed-fw">--</div>
                     <div class="card-label">Mixed Firmware Models</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Wiring Validation summary (cross-check topology.dot vs ibnetdiscover) -->
+        <div class="dashboard-section">
+            <div class="section-title" onclick="navTo('lldp.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/><line x1="13" y1="7" x2="22" y2="7"/></svg>
+                Wiring Validation (expected vs actual)
+            </div>
+            <div class="summary-grid">
+                <div class="summary-card card-total" onclick="navTo('lldp.html')">
+                    <div class="card-value" id="wire-total">--</div>
+                    <div class="card-label">Ports Checked</div>
+                </div>
+                <div class="summary-card card-excellent" onclick="navTo('lldp.html')">
+                    <div class="card-value status-excellent" id="wire-pass">--</div>
+                    <div class="card-label">Passing</div>
+                </div>
+                <div class="summary-card card-critical" onclick="navTo('lldp.html')">
+                    <div class="card-value status-critical" id="wire-fail">--</div>
+                    <div class="card-label">Mis-wired / Missing</div>
+                </div>
+                <div class="summary-card card-warning" onclick="navTo('lldp.html')">
+                    <div class="card-value status-warning" id="wire-extra">--</div>
+                    <div class="card-label">Unexpected Cables</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hardware Health summary (per-switch CPU/fan/PSU) -->
+        <div class="dashboard-section">
+            <div class="section-title" onclick="navTo('/monitor-results/hardware-analysis.html')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+                Hardware Health
+            </div>
+            <div class="summary-grid">
+                <div class="summary-card card-total" onclick="navTo('/monitor-results/hardware-analysis.html')">
+                    <div class="card-value" id="hw-total">--</div>
+                    <div class="card-label">Switches Sampled</div>
+                </div>
+                <div class="summary-card card-excellent" onclick="navTo('/monitor-results/hardware-analysis.html')">
+                    <div class="card-value status-excellent" id="hw-ok">--</div>
+                    <div class="card-label">Healthy</div>
+                </div>
+                <div class="summary-card card-warning" onclick="navTo('/monitor-results/hardware-analysis.html')">
+                    <div class="card-value status-warning" id="hw-warn">--</div>
+                    <div class="card-label">Temp/Fan Warning</div>
+                </div>
+                <div class="summary-card card-critical" onclick="navTo('/monitor-results/hardware-analysis.html')">
+                    <div class="card-value status-critical" id="hw-crit">--</div>
+                    <div class="card-label">Critical</div>
                 </div>
             </div>
         </div>
@@ -614,6 +743,12 @@
                 ['log-critical','log-error','log-warning','log-info'].forEach(id => setText(id, '--'));
             }
 
+            // ---- Wiring validation (topology.dot vs ib_topology.json)
+            await loadWiringSummary(topology);
+
+            // ---- Hardware health (parse generated hardware-analysis.html)
+            await loadHardwareSummary();
+
             // ---- Header timestamp
             const stamps = [topology?.generated_at, sm?.generated_at, links?.generated_at]
                 .filter(Boolean).sort();
@@ -691,6 +826,78 @@
                 setText('stat-switches', '0');
                 setText('stat-hcas', '0');
                 setText('stat-links', '0');
+            }
+        }
+
+        // Wiring validation: parse topology.dot, cross-check ib_topology.json.
+        // Mirrors lldp.html logic in a compact form so the dashboard tile is
+        // accurate without re-fetching.
+        async function loadWiringSummary(topology) {
+            const ids = ['wire-total','wire-pass','wire-fail','wire-extra'];
+            try {
+                const r = await fetch('/topology.dot?t=' + Date.now(), { cache: 'no-store' });
+                const dotText = r.ok ? await r.text() : '';
+                if (!dotText) { ids.forEach(i => setText(i, '0')); return; }
+
+                const norm = p => (/^IB\d+\//i.test(p) ? p : `IB1/${p}`);
+                const stripped = dotText.replace(/\/\*[\s\S]*?\*\//g, '');
+                const dotRe = /"([^"]+)"\s*:\s*"([^"]+)"\s*--\s*"([^"]+)"\s*:\s*"([^"]+)"/g;
+                const exp = new Map(); let m;
+                while ((m = dotRe.exec(stripped)) !== null) {
+                    exp.set(`${m[1]}|${norm(m[2])}`, `${m[3]}|${norm(m[4])}`);
+                    exp.set(`${m[3]}|${norm(m[4])}`, `${m[1]}|${norm(m[2])}`);
+                }
+
+                const act = new Map();
+                for (const l of (topology?.links || [])) {
+                    const sk = `${l.source_desc}|${norm(String(l.source_port))}`;
+                    const tk = `${l.target_desc}|${norm(String(l.target_port))}`;
+                    act.set(sk, tk);
+                    act.set(tk, sk);
+                }
+
+                const keys = new Set([...exp.keys(), ...act.keys()]);
+                let pass = 0, fail = 0, extra = 0;
+                for (const k of keys) {
+                    const e = exp.get(k), a = act.get(k);
+                    if (e && a)      pass += (e === a ? 1 : 0), fail += (e !== a ? 1 : 0);
+                    else if (e)      fail++;
+                    else if (a)      extra++;
+                }
+                setText('wire-total', keys.size);
+                setText('wire-pass',  pass);
+                setText('wire-fail',  fail);
+                setText('wire-extra', extra);
+            } catch (e) {
+                ids.forEach(i => setText(i, '--'));
+            }
+        }
+
+        // Hardware health: hardware-analysis.html is server-generated by
+        // generate_hardware_html.py. We scrape its summary stats with a
+        // regex (no JSON endpoint exists yet). Falls back to "--" if the
+        // file isn't present.
+        async function loadHardwareSummary() {
+            const ids = ['hw-total','hw-ok','hw-warn','hw-crit'];
+            try {
+                const r = await fetch('/monitor-results/hardware-analysis.html?t=' + Date.now(), { cache: 'no-store' });
+                if (!r.ok) { ids.forEach(i => setText(i, '0')); return; }
+                const html = await r.text();
+                const pick = (re, fallback = '--') => {
+                    const m = html.match(re);
+                    return m ? m[1] : fallback;
+                };
+                // generate_hardware_html emits summary cards with these ids.
+                const excellent = parseInt(pick(/id="excellent-devices"[^>]*>([\d]+)</i, '0'), 10) || 0;
+                const good      = parseInt(pick(/id="good-devices"[^>]*>([\d]+)</i, '0'), 10) || 0;
+                const warning   = parseInt(pick(/id="warning-devices"[^>]*>([\d]+)</i, '0'), 10) || 0;
+                const critical  = parseInt(pick(/id="critical-devices"[^>]*>([\d]+)</i, '0'), 10) || 0;
+                setText('hw-total', excellent + good + warning + critical);
+                setText('hw-ok',    excellent + good);
+                setText('hw-warn',  warning);
+                setText('hw-crit',  critical);
+            } catch (e) {
+                ids.forEach(i => setText(i, '--'));
             }
         }
 

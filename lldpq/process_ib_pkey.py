@@ -14,6 +14,10 @@ import os
 import re
 import json
 from datetime import datetime
+try:
+    import yaml
+except Exception:
+    yaml = None
 
 
 # MLNX-OS 'show ib partition' output (varies between versions). Common form:
@@ -166,6 +170,53 @@ def process_pkey(data_dir='monitor-results/ib-pkey',
         pkey_summary.append(record)
         if not consistent:
             inconsistencies.append(record)
+
+    # Optional expected policy: expected_pkeys.yaml
+    # This is a monitoring-only drift check, not configuration management.
+    # Schema:
+    # partitions:
+    #   0x7fff:
+    #     name: default
+    #     required_on: all
+    #     min_members: 1
+    #   0x8001:
+    #     name: ai-training
+    #     required_on_roles: [leaf, spine]   # optional, currently advisory
+    policy = {'enabled': False, 'violations': [], 'summary': {'expected': 0, 'pass': 0, 'warning': 0, 'missing': 0, 'unexpected': 0}}
+    expected_path = os.path.join(os.path.dirname(output_dir), 'expected_pkeys.yaml')
+    if yaml and os.path.exists(expected_path):
+        try:
+            with open(expected_path) as f:
+                expected_cfg = yaml.safe_load(f) or {}
+            expected = expected_cfg.get('partitions') or {}
+            policy['enabled'] = True
+            policy['expected_file'] = expected_path
+            policy['summary']['expected'] = len(expected)
+            seen_pkeys = set(pkey_seen.keys())
+            expected_pkeys = {str(k).lower(): v for k, v in expected.items()}
+            for epkey, spec in expected_pkeys.items():
+                if epkey not in seen_pkeys:
+                    policy['summary']['missing'] += 1
+                    policy['violations'].append({'pkey': epkey, 'severity': 'critical', 'type': 'missing', 'message': 'Expected P_Key not present on any polled switch'})
+                    continue
+                rec = next((r for r in pkey_summary if r['pkey'] == epkey), None)
+                notes = []
+                min_members = spec.get('min_members') if isinstance(spec, dict) else None
+                if min_members and rec and rec.get('max_members', 0) < int(min_members):
+                    notes.append(f"member count {rec.get('max_members', 0)} < expected {min_members}")
+                exp_name = spec.get('name') if isinstance(spec, dict) else None
+                if exp_name and rec and rec.get('names') and exp_name not in rec.get('names', []):
+                    notes.append(f"name mismatch: expected {exp_name}, saw {rec.get('names')}")
+                if notes:
+                    policy['summary']['warning'] += 1
+                    policy['violations'].append({'pkey': epkey, 'severity': 'warning', 'type': 'drift', 'message': '; '.join(notes)})
+                else:
+                    policy['summary']['pass'] += 1
+            for actual in sorted(seen_pkeys - set(expected_pkeys.keys())):
+                policy['summary']['unexpected'] += 1
+                policy['violations'].append({'pkey': actual, 'severity': 'info', 'type': 'unexpected', 'message': 'P_Key exists in fabric but is not listed in expected_pkeys.yaml'})
+        except Exception as e:
+            policy = {'enabled': True, 'error': str(e), 'violations': [], 'summary': {'expected': 0, 'pass': 0, 'warning': 0, 'missing': 0, 'unexpected': 0}}
     
     result = {
         'last_update': datetime.now().isoformat(),
@@ -183,8 +234,10 @@ def process_pkey(data_dir='monitor-results/ib-pkey',
             'total_pkeys': len(pkey_seen),
             'devices_polled': len(per_device),
             'inconsistencies': len(inconsistencies),
+            'policy_violations': len(policy.get('violations', [])),
         }
     }
+    result['policy'] = policy
     
     output_path = os.path.join(output_dir, 'ib_pkey.json')
     with open(output_path, 'w') as f:

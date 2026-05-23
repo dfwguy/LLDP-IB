@@ -1,0 +1,23 @@
+# LLDPq-IB expected P_Key policy.
+#
+# This file is optional. If present, process_ib_pkey.py compares the actual
+# fabric partitions (show ib partition) against this expected policy and adds
+# a `policy` section to monitor-results/ib_pkey.json.
+#
+# It is monitoring-only: LLDPq-IB never pushes partition config.
+
+partitions:
+  "0x7fff":
+    name: "default (full membership)"
+    required_on: all
+    min_members: 1
+
+  "0x8001":
+    name: "ai-training"
+    required_on: all
+    min_members: 1
+
+  "0x8002":
+    name: "storage"
+    required_on: all
+    min_members: 1

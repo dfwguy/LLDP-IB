@@ -343,6 +343,27 @@ def make_link_history():
     }
 
 
+def make_sm_history(nodes):
+    """A compact 24-sample SM timeline for demo mode."""
+    spines = [n for n in nodes if n["role"] == "spine"]
+    master = spines[0]
+    now = datetime.datetime.now(datetime.timezone.utc)
+    hist = []
+    for idx in range(24):
+        ts = (now - datetime.timedelta(minutes=10 * (23 - idx))).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+        hist.append({
+            "ts": ts,
+            "master_guid": master["guid"],
+            "master_count": 1,
+            "standby_count": 1,
+            "has_master": True,
+            "has_redundancy": True,
+            "disagreements": 1 if idx >= 18 else 0,
+            "devices_polled": SPINE_COUNT + LEAF_COUNT,
+        })
+    return {"last_update": now_iso(), "history": hist}
+
+
 def make_pkey(nodes):
     """3 partitions: default (all), training (all hosts), storage (8 hosts)."""
     hosts = [n for n in nodes if n["role"] == "host"]
@@ -370,16 +391,38 @@ def make_pkey(nodes):
     per_device = {}
     for sw in switches:
         per_device[sw["hostname"]] = list(partitions.keys())
+    pkey_rows = []
+    for key, info in partitions.items():
+        pkey_rows.append({
+            "pkey": key,
+            "names": [info["name"]],
+            "devices": [s["hostname"] for s in switches],
+            "device_count": len(switches),
+            "mtus": ["4096"],
+            "rates": [LINK_SPEED],
+            "ipoib_states": ["True" if key == "0x7fff" else "False"],
+            "max_members": info["member_count"],
+            "consistent": True,
+            "policy_status": "pass",
+            "policy_notes": [],
+        })
     return {
         "generated_at": now_iso(),
-        "pkeys":        partitions,
-        "per_device":   per_device,
+        "pkeys":        pkey_rows,
+        "per_device":   {host: [{"pkey": p} for p in pkeys] for host, pkeys in per_device.items()},
+        "policy": {
+            "enabled": True,
+            "expected_file": "expected_pkeys.yaml",
+            "violations": [],
+            "summary": {"expected": 3, "pass": 3, "warning": 0, "missing": 0, "unexpected": 0},
+        },
         "summary": {
             "total_pkeys":        len(partitions),
             "partition_count":    len(partitions),
             "devices_polled":     len(switches),
             "inconsistencies":    0,
             "inconsistency_count": 0,
+            "policy_violations":  0,
         },
     }
 
@@ -699,6 +742,27 @@ def make_hardware_files(target_dir, nodes):
         (hw_dir / f"{n['hostname']}_hardware.txt").write_text(body)
 
 
+def make_log_files(target_dir, nodes):
+    """Write synthetic per-switch log files so process_log_data.py can generate
+    log-analysis.html in LLDPQ_DEMO=true builds (cron is disabled there)."""
+    log_dir = target_dir / "log-data"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    for n in nodes:
+        if n["type"] != "switch":
+            continue
+        lines = [
+            f"{now_iso()} INFO OpenSM sweep completed on {n['hostname']}",
+            f"{now_iso()} INFO Port counters collected for {n['hostname']}",
+        ]
+        if n["hostname"] == "ib-leaf-03":
+            lines.append(f"{now_iso()} ERROR PortRcvSwitchRelayErrors increasing on IB1/12")
+        if n["hostname"] == "ib-leaf-05":
+            lines.append(f"{now_iso()} WARNING Link downed on IB1/8 (peer ib-spine-04)")
+        if n["hostname"] == "ib-leaf-07":
+            lines.append(f"{now_iso()} WARNING Sporadic PortRcvErrors on IB1/22")
+        (log_dir / f"{n['hostname']}_logs.txt").write_text("\n".join(lines) + "\n")
+
+
 # ---------- driver ----------
 
 
@@ -714,6 +778,7 @@ def write_all(target_dir: Path, web_root: Path | None):
     bundles = {
         "ib_topology.json":          make_topology(nodes, links),
         "ib_sm_status.json":         make_sm_status(nodes),
+        "ib_sm_history.json":        make_sm_history(nodes),
         "ib_link_errors.json":       make_link_errors(nodes, links),
         "ib_link_history.json":      make_link_history(),
         "ib_pkey.json":              make_pkey(nodes),
@@ -728,6 +793,7 @@ def write_all(target_dir: Path, web_root: Path | None):
         (target_dir / name).write_text(json.dumps(data, indent=2) + "\n")
 
     make_hardware_files(target_dir, nodes)
+    make_log_files(target_dir, nodes)
 
     if web_root is not None:
         web_root.mkdir(parents=True, exist_ok=True)

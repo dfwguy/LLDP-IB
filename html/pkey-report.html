@@ -22,7 +22,9 @@
         <div class="summary-card card-info"><div class="card-value" id="devices-polled">-</div><div class="card-label">Devices Polled</div></div>
         <div class="summary-card card-warning"><div class="card-value" id="inconsistency-count">-</div><div class="card-label">Inconsistencies</div></div>
         <div class="summary-card card-success"><div class="card-value" id="ipoib-count">-</div><div class="card-label">IPoIB Enabled</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="policy-count">-</div><div class="card-label">Policy Findings</div></div>
     </div>
+    <div id="policy-section" style="display:none; margin-bottom: 18px;"></div>
 
     <div class="filter-bar">
         <div class="filter-group">
@@ -61,6 +63,7 @@
 
 <script>
 let allPkeys = [];
+let policy = null;
 
 document.addEventListener('DOMContentLoaded', loadData);
 
@@ -68,7 +71,8 @@ async function loadData() {
     try {
         const resp = await fetch('/monitor-results/ib_pkey.json', {cache: 'no-store'});
         const data = await resp.json();
-        allPkeys = data.pkeys || [];
+        allPkeys = normalizePkeys(data.pkeys || []);
+        policy = data.policy || null;
         const summary = data.summary || {};
         document.getElementById('last-updated').textContent = data.last_update
             ? 'Last Updated: ' + new Date(data.last_update).toLocaleString('sv-SE').replace('T', ' ')
@@ -77,16 +81,60 @@ async function loadData() {
         document.getElementById('devices-polled').textContent = summary.devices_polled || 0;
         document.getElementById('inconsistency-count').textContent = summary.inconsistencies || 0;
         document.getElementById('ipoib-count').textContent = allPkeys.filter(p => p.ipoib_states && p.ipoib_states.includes('True')).length;
+        document.getElementById('policy-count').textContent = summary.policy_violations || (policy?.violations || []).length || 0;
 
         if (summary.inconsistencies > 0) {
             document.getElementById('banner').innerHTML =
                 `<div class="alert-box alert-warning"><strong>${summary.inconsistencies} P_Key inconsistencies detected.</strong> Same P_Key configured with different MTU/Rate/IPoIB on different switches.</div>`;
         }
+        renderPolicy(policy);
         renderTable();
     } catch (e) {
         document.getElementById('pkey-table').innerHTML =
             '<tr><td colspan="8"><div class="no-data"><h3>No P_Key data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
     }
+}
+
+function normalizePkeys(raw) {
+    if (Array.isArray(raw)) return raw;
+    // Demo / older schema may be object keyed by pkey.
+    return Object.entries(raw || {}).map(([pkey, info]) => ({
+        pkey,
+        names: [info.name || ''],
+        devices: [],
+        device_count: 0,
+        mtus: [],
+        rates: [],
+        ipoib_states: [String(!!info.ipoib)],
+        max_members: info.member_count || (info.members || []).length || 0,
+        consistent: true,
+    }));
+}
+
+function renderPolicy(policy) {
+    const el = document.getElementById('policy-section');
+    if (!policy || !policy.enabled) {
+        el.style.display = '';
+        el.innerHTML = '<div class="alert-box alert-info"><strong>Expected P_Key policy is not configured.</strong> Add <code>expected_pkeys.yaml</code> next to <code>devices.yaml</code> to enable drift checks.</div>';
+        return;
+    }
+    const findings = policy.violations || [];
+    if (findings.length === 0) {
+        el.style.display = '';
+        el.innerHTML = '<div class="alert-box alert-info" style="background:rgba(76,175,80,0.08);border-left-color:#4caf50;color:#a5d6a7;"><strong>Expected P_Key policy passed.</strong> Actual partitions match <code>expected_pkeys.yaml</code>.</div>';
+        return;
+    }
+    el.style.display = '';
+    const rows = findings.map(f => `<tr>
+        <td><span class="badge ${f.severity === 'critical' ? 'badge-red' : f.severity === 'warning' ? 'badge-yellow' : 'badge-blue'}">${f.severity}</span></td>
+        <td class="mono">${f.pkey}</td>
+        <td>${f.type}</td>
+        <td>${f.message}</td>
+    </tr>`).join('');
+    el.innerHTML = `<div class="table-container"><table class="data-table">
+        <thead><tr><th>Severity</th><th>P_Key</th><th>Type</th><th>Finding</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
 function renderTable() {

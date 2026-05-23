@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Diagnostics</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <script src="css/lldpq-ib.js"></script>
+    <style>
+        .diag-grid { display:grid; grid-template-columns: 320px 1fr; gap:16px; align-items:start; }
+        .diag-panel { background:#252526; border-radius:6px; padding:16px; }
+        .diag-panel h3 { color:#76b900; font-size:14px; margin:0 0 10px; }
+        .diag-panel select, .diag-panel input {
+            width:100%; padding:8px 10px; background:#1a1a1a; color:#d4d4d4;
+            border:1px solid #404040; border-radius:4px; margin-bottom:10px;
+        }
+        .preset { display:block; width:100%; text-align:left; margin:6px 0; padding:9px 10px; border:0; border-radius:4px; background:#333; color:#ddd; cursor:pointer; }
+        .preset:hover { background:#3d3d3d; color:#fff; }
+        .preset.danger { border-left:3px solid #f44336; }
+        .cmd-out { background:#111; color:#d4d4d4; border-radius:6px; padding:14px; min-height:420px; max-height:70vh; overflow:auto; white-space:pre-wrap; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Manual IB Diagnostics</div>
+            <div class="last-updated">Run heavyweight diagnostics on demand. Nothing here runs in cron.</div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="downloadOutput()">Download Output</button>
+            <button class="btn btn-primary" onclick="runCustom()">Run Custom</button>
+        </div>
+    </div>
+
+    <div class="diag-grid">
+        <div class="diag-panel">
+            <h3>Target switch</h3>
+            <select id="device"></select>
+            <h3>Safe presets</h3>
+            <button class="preset" onclick="runPreset('ib sminfo')">SM info (<code>ib sminfo</code>)</button>
+            <button class="preset" onclick="runPreset('ib iblinkinfo --line')">Link info (<code>iblinkinfo --line</code>)</button>
+            <button class="preset" onclick="runPreset('ib ibqueryerrors --details')">Query errors (<code>ibqueryerrors --details</code>)</button>
+            <button class="preset" onclick="runPreset('ib saquery -m')">Multicast groups (<code>saquery -m</code>)</button>
+            <button class="preset" onclick="runPreset('ib ibnetdiscover -p')">Topology dump (<code>ibnetdiscover -p</code>)</button>
+            <button class="preset danger" onclick="runDanger('ib ibroute')">LFT/MFT dump (<code>ibroute</code>)</button>
+            <div class="alert-box alert-warning" style="margin-top:12px;font-size:12px;">
+                <strong>Manual only:</strong> heavy commands like <code>ibroute</code> can produce MBs per switch. Use them for TAC/debug, never cron.
+            </div>
+        </div>
+
+        <div class="diag-panel">
+            <h3>Command</h3>
+            <input id="cmd" placeholder="ib ibqueryerrors --details">
+            <pre class="cmd-out" id="output">Select a switch and run a preset.</pre>
+        </div>
+    </div>
+
+<script>
+let lastOutput = '';
+document.addEventListener('DOMContentLoaded', loadDevices);
+
+async function loadDevices() {
+    const sel = document.getElementById('device');
+    try {
+        const r = await fetch('/ib-api.sh?action=list-devices', {cache:'no-store'});
+        const data = await r.json();
+        const devices = data.devices_flat || [];
+        sel.innerHTML = devices.map(d => `<option value="${d.hostname}">${d.hostname} (${d.ip})</option>`).join('');
+    } catch (e) {
+        sel.innerHTML = '<option value="">No devices</option>';
+        document.getElementById('output').textContent = 'Cannot load devices: ' + e.message;
+    }
+}
+
+function runPreset(cmd) {
+    document.getElementById('cmd').value = cmd;
+    runCustom();
+}
+
+async function runDanger(cmd) {
+    const ok = await LLDPqUI.confirm({
+        title: 'Heavy diagnostic command',
+        message: `Run <code>${cmd}</code>? This may produce large output and take a while.`,
+        confirmText: 'Run',
+        danger: true
+    });
+    if (ok) runPreset(cmd);
+}
+
+async function runCustom() {
+    const device = document.getElementById('device').value;
+    const command = document.getElementById('cmd').value.trim();
+    const out = document.getElementById('output');
+    if (!device || !command) {
+        await LLDPqUI.alert({title:'Missing input', message:'Pick a switch and enter a command.', type:'warning'});
+        return;
+    }
+    out.textContent = `$ ${command}\n\nRunning on ${device}...`;
+    try {
+        const r = await fetch('/ib-api.sh?action=run-device-command', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({device, command})
+        });
+        const data = await r.json();
+        lastOutput = data.success ? (data.output || '') : ('ERROR: ' + (data.error || 'unknown'));
+        out.textContent = `$ ${command}\n# device: ${device}\n\n${lastOutput}`;
+    } catch (e) {
+        lastOutput = 'ERROR: ' + e.message;
+        out.textContent = lastOutput;
+    }
+}
+
+function downloadOutput() {
+    const blob = new Blob([lastOutput || document.getElementById('output').textContent], {type:'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `lldpq-ib-diagnostic-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

@@ -2568,7 +2568,7 @@ def action_list_generated_configs():
     configs = []
     if os.path.isdir(GENERATED_CONFIGS_DIR):
         for f in sorted(os.listdir(GENERATED_CONFIGS_DIR)):
-            if f.endswith(('.yaml', '.yml')):
+            if f.endswith(('.cfg', '.txt', '.yaml', '.yml')):
                 filepath = os.path.join(GENERATED_CONFIGS_DIR, f)
                 stat = os.stat(filepath)
                 hostname = f.rsplit('.', 1)[0]
@@ -2655,8 +2655,8 @@ def action_upload_generated_config():
 
     if not filename or not content:
         error_json("Missing filename or content")
-    if not filename.endswith(('.yaml', '.yml')):
-        error_json("Only .yaml/.yml files allowed")
+    if not filename.endswith(('.cfg', '.txt', '.yaml', '.yml')):
+        error_json("Only .cfg/.txt/.yaml/.yml files allowed")
     if '/' in filename or '..' in filename:
         error_json("Invalid filename")
 

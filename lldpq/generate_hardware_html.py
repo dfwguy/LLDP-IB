@@ -17,41 +17,54 @@ import re
 from datetime import datetime
 
 def parse_assets_file(assets_file_path="assets.ini"):
-    """Parse assets.ini file to get device model information"""
+    """Parse LLDPq-IB assets.ini file to get device model information.
+
+    ib-assets.sh writes a tab-separated schema:
+        DEVICE-NAME  IP  MODEL  SERIAL  RELEASE  OS  UPTIME
+    Older Ethernet code expected DEVICE IP MAC SERIAL MODEL RELEASE. The IB
+    schema is different, so parse by header-aware column names where possible
+    and fall back to the new positional layout.
+    """
     device_info = {}
     try:
         with open(assets_file_path, 'r') as file:
             lines = file.readlines()
             print(f"Parsing assets.ini with {len(lines)} lines")
-            
+
             header_found = False
             for i, line in enumerate(lines):
                 line = line.strip()
                 if not line or line.startswith("#") or line.startswith("Created"):
+                    if line.startswith("# DEVICE-NAME"):
+                        header_found = True
                     continue
-                    
-                parts = line.split()
+
+                # Prefer tab split (ib-assets.sh), tolerate whitespace if copied.
+                parts = line.split("\t") if "\t" in line else line.split()
                 if len(parts) < 5:
                     continue
-                    
+
                 device_name = parts[0]
-                
+
                 # Skip header line
                 if device_name == "DEVICE-NAME":
                     header_found = True
                     print(f"Found header at line {i+1}: {parts}")
                     continue
-                    
+
                 if header_found and len(parts) >= 5:
-                    model = parts[4] if parts[4] != "No-Info" and parts[4] != "SSH-FAILED" else "N/A"
+                    # IB schema: hostname, ip, model, serial, release, os, uptime
+                    model = parts[2] if len(parts) > 2 else "N/A"
+                    if model in ("No-Info", "SSH-FAILED", ""):
+                        model = "N/A"
                     device_info[device_name] = {
                         "ip": parts[1] if len(parts) > 1 else "N/A",
-                        "mac": parts[2] if len(parts) > 2 else "N/A", 
+                        "mac": "N/A",
                         "serial": parts[3] if len(parts) > 3 else "N/A",
                         "model": model,
-                        "release": parts[5] if len(parts) > 5 else "N/A"
+                        "release": parts[4] if len(parts) > 4 else "N/A"
                     }
-                    
+
     except FileNotFoundError:
         print(f"❌ assets.ini file not found at {assets_file_path}")
     except Exception as e:

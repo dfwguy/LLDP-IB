@@ -2,33 +2,202 @@
 <html>
 <head>
     <link rel="shortcut icon" href="/png/favicon.ico">
-    <title>..::LLDPQ-IB:: Discovery Archive</title>
+    <title>..::LLDPQ-IB:: Archive</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <style>
+        .archive-toolbar {
+            display: flex; gap: 10px; align-items: center;
+            margin-bottom: 18px; flex-wrap: wrap;
+        }
+        .archive-toolbar select {
+            min-width: 320px; padding: 9px 12px; background: #2d2d2d;
+            border: 1px solid #404040; color: #fff; border-radius: 6px;
+            font-size: 13px; font-family: 'Cascadia Code', monospace;
+        }
+        .archive-toolbar select:focus { border-color: #76b900; outline: none; }
+        .snapshot-meta {
+            color: #888; font-size: 12px;
+            background: rgba(118, 185, 0, 0.05);
+            border-left: 2px solid #76b900;
+            padding: 8px 12px; border-radius: 3px;
+            margin-bottom: 18px;
+        }
+        .json-viewer {
+            background: #111; color: #d4d4d4; padding: 16px;
+            border-radius: 6px; max-height: 60vh; overflow: auto;
+            font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+            font-size: 12px; line-height: 1.5; white-space: pre;
+        }
+        .kv-grid { display: grid; grid-template-columns: 180px 1fr; gap: 6px 18px; font-size: 13px; }
+        .kv-grid .k { color: #888; }
+        .kv-grid .v { color: #d4d4d4; }
+    </style>
 </head>
 <body>
     <div class="page-header">
         <div>
-            <div class="page-title">IB Discovery Archive</div>
+            <div class="page-title">Discovery Archive</div>
             <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="loadList()">Refresh</button>
+            <button class="btn btn-primary"   id="dl-btn"  onclick="downloadCurrent()" disabled>Download JSON</button>
         </div>
     </div>
 
-    <div class="alert-box alert-info" style="margin-bottom: 25px;">
-        <strong>Coming soon.</strong> Historical snapshots of IB topology and link counters
-        will be available here. For now, the latest discovery results are shown on the
-        <a href="lldp.html" target="content-iframe" style="color:#76b900;">Discovery Results</a>
-        page.
+    <div class="archive-toolbar">
+        <label style="color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Snapshot</label>
+        <select id="snap-select" onchange="loadSelected()">
+            <option value="">-- Loading snapshots... --</option>
+        </select>
     </div>
 
-    <div class="table-container">
-        <table class="data-table">
-            <thead><tr><th>Date</th><th>Type</th><th>Devices</th><th>Links</th><th>Actions</th></tr></thead>
-            <tbody>
-                <tr><td colspan="5"><div class="no-data"><h3>No archived snapshots yet</h3><p>This feature will be enabled in a future release.</p></div></td></tr>
-            </tbody>
-        </table>
+    <div id="snap-meta" class="snapshot-meta" style="display:none;"></div>
+
+    <div class="summary-grid" id="summary" style="display:none;">
+        <div class="summary-card card-info"><div class="card-value" id="snap-nodes">-</div><div class="card-label">Topology Nodes</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="snap-links">-</div><div class="card-label">Topology Links</div></div>
+        <div class="summary-card card-success"><div class="card-value" id="snap-master">-</div><div class="card-label">SM Master</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="snap-disagreements">-</div><div class="card-label">SM Disagreements</div></div>
+        <div class="summary-card card-danger"><div class="card-value" id="snap-critical">-</div><div class="card-label">Critical Ports</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="snap-warning">-</div><div class="card-label">Warning Ports</div></div>
     </div>
+
+    <div id="snap-body">
+        <div class="no-data">
+            <h3>Pick a snapshot</h3>
+            <p>LLDPq-IB rotates a point-in-time snapshot of <code>ib_topology.json</code>,
+               <code>ib_sm_status.json</code>, <code>ib_link_errors.json</code>,
+               <code>ib_pkey.json</code>, <code>transceiver_inventory.json</code>, and
+               <code>log_summary.json</code> on every monitor pass (every 10 min).
+               The 50 most recent snapshots are kept under
+               <code>/monitor-results/snapshots/</code>.</p>
+        </div>
+    </div>
+
+<script>
+let currentSnap = null;
+let snapshotList = [];
+
+document.addEventListener('DOMContentLoaded', loadList);
+
+async function loadList() {
+    const sel = document.getElementById('snap-select');
+    sel.innerHTML = '<option value="">-- Loading snapshots... --</option>';
+    try {
+        // nginx autoindex returns HTML listing
+        const r = await fetch('/monitor-results/snapshots/?t=' + Date.now(),
+                              { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status} from /monitor-results/snapshots/`);
+        const text = await r.text();
+        const files = [];
+        // autoindex links look like <a href="lldpq-ib-YYYYMMDD-HHMMSS.json">...
+        for (const m of text.matchAll(/href="(lldpq-ib-\d{8}-\d{6}\.json)"/g)) {
+            files.push(m[1]);
+        }
+        files.sort().reverse();   // newest first
+        snapshotList = files;
+        document.getElementById('last-updated').textContent =
+            files.length ? `${files.length} snapshot${files.length === 1 ? '' : 's'} archived`
+                         : 'No snapshots yet';
+        if (!files.length) {
+            sel.innerHTML = '<option value="">(no snapshots yet -- wait for next monitor pass)</option>';
+            return;
+        }
+        sel.innerHTML = '<option value="">-- pick a snapshot --</option>' +
+            files.map(f => `<option value="${f}">${snapshotPretty(f)}</option>`).join('');
+        // Auto-load newest
+        sel.value = files[0];
+        loadSelected();
+    } catch (e) {
+        sel.innerHTML = '<option value="">(snapshots unavailable)</option>';
+        document.getElementById('snap-body').innerHTML =
+            `<div class="alert-box alert-danger">Cannot list snapshots: ${e.message}.
+             The monitor cron writes the first snapshot after its initial pass --
+             try again in 10 minutes, or invoke <code>/usr/local/bin/lldpq</code> manually.</div>`;
+    }
+}
+
+function snapshotPretty(fname) {
+    // lldpq-ib-20260523-104203.json -> 2026-05-23 10:42:03
+    const m = fname.match(/^lldpq-ib-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.json$/);
+    if (!m) return fname;
+    return `${m[1]}-${m[2]}-${m[3]}  ${m[4]}:${m[5]}:${m[6]}  -  ${fname}`;
+}
+
+async function loadSelected() {
+    const fname = document.getElementById('snap-select').value;
+    if (!fname) return;
+    const body = document.getElementById('snap-body');
+    body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading snapshot...</div>';
+    try {
+        const r = await fetch('/monitor-results/snapshots/' + encodeURIComponent(fname),
+                              { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        currentSnap = await r.json();
+        document.getElementById('dl-btn').disabled = false;
+        renderSnap(fname, currentSnap);
+    } catch (e) {
+        body.innerHTML = `<div class="alert-box alert-danger">Failed to load ${fname}: ${e.message}</div>`;
+        document.getElementById('dl-btn').disabled = true;
+    }
+}
+
+function renderSnap(fname, snap) {
+    const meta = document.getElementById('snap-meta');
+    const sum  = document.getElementById('summary');
+    const body = document.getElementById('snap-body');
+
+    meta.style.display = '';
+    meta.innerHTML = `Snapshot <code>${fname}</code> &nbsp;·&nbsp;
+                      generated at <strong>${snap.generated_at || 'unknown'}</strong>`;
+
+    sum.style.display = '';
+    const topo = snap.ib_topology || {};
+    const sm   = snap.ib_sm_status || {};
+    const le   = snap.ib_link_errors || {};
+    setText('snap-nodes',         topo.summary?.total_nodes ?? '--');
+    setText('snap-links',         topo.summary?.total_links ?? '--');
+    setText('snap-master',        sm.master_hostname || (sm.summary?.has_master ? 'set' : 'none'));
+    setText('snap-disagreements', sm.summary?.disagreement_count ?? (sm.disagreements?.length ?? 0));
+    setText('snap-critical',      le.summary?.critical ?? le.summary?.critical_count ?? '--');
+    setText('snap-warning',       le.summary?.warning  ?? le.summary?.warning_count  ?? '--');
+
+    // Show key facts + a pretty JSON dump
+    body.innerHTML = `
+        <h3 style="color:#76b900;font-size:14px;margin:16px 0 10px;">Summary at snapshot time</h3>
+        <div class="kv-grid">
+            <div class="k">Subnet Manager Master</div><div class="v">${esc(sm.master_hostname || '-')} <span class="mono" style="color:#888;">${esc(sm.master_guid || '')}</span></div>
+            <div class="k">Last SM sweep</div><div class="v">${sm.last_sweep_seconds != null ? sm.last_sweep_seconds + 's' : '-'}</div>
+            <div class="k">Total partitions</div><div class="v">${snap.ib_pkey?.summary?.partition_count ?? '-'}</div>
+            <div class="k">Transceiver modules</div><div class="v">${snap.transceiver_inventory?.summary?.modules_count ?? '-'}</div>
+            <div class="k">Mixed-FW models</div><div class="v">${(snap.transceiver_inventory?.summary?.mixed_fw_models || []).join(', ') || '-'}</div>
+            <div class="k">Log severity (C/E/W/I)</div><div class="v">${snap.log_summary?.critical ?? '-'} / ${snap.log_summary?.error ?? '-'} / ${snap.log_summary?.warning ?? '-'} / ${snap.log_summary?.info ?? '-'}</div>
+        </div>
+
+        <h3 style="color:#76b900;font-size:14px;margin:18px 0 8px;">Raw snapshot JSON</h3>
+        <pre class="json-viewer">${esc(JSON.stringify(snap, null, 2))}</pre>
+    `;
+}
+
+function downloadCurrent() {
+    if (!currentSnap) return;
+    const blob = new Blob([JSON.stringify(currentSnap, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = document.getElementById('snap-select').value || 'snapshot.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+</script>
 </body>
 </html>

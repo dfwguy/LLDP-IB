@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Provision - ZTP & Base Config</title>
+    <title>Provision - MLNX-OS ZTP</title>
     <link rel="shortcut icon" href="/png/favicon.ico">
     <script src="/css/auth.js"></script>
     <style>
@@ -853,7 +853,7 @@ async function saveDevicesYamlEditor() {
     <button class="tab-btn" data-tab="bindings">Inventory</button>
     <button class="tab-btn" data-tab="dhcpd">DHCP Server</button>
     <button class="tab-btn" data-tab="ztp-script">ZTP</button>
-    <button class="tab-btn" data-tab="upgrade">Upgrade</button>
+    <button class="tab-btn" data-tab="upgrade">Upgrade (manual)</button>
     <button class="tab-btn" data-tab="guide" style="margin-left:auto; color:#555;">Guide</button>
 </div>
 
@@ -1162,8 +1162,8 @@ async function saveDevicesYamlEditor() {
 
     <!-- OS Image Upload Section -->
     <div style="margin-bottom: 20px; padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c;">
-        <div class="section-title" style="font-size: 14px; margin-bottom: 5px;">OS Image</div>
-        <div class="section-desc" style="margin-bottom: 10px;">Cumulus Linux images served via HTTP. Uploading an image does not make it active until you choose <strong>Use for ZTP</strong>.</div>
+        <div class="section-title" style="font-size: 14px; margin-bottom: 5px;">MLNX-OS Image Repository</div>
+        <div class="section-desc" style="margin-bottom: 10px;">Optional MLNX-OS image files served via HTTP for manual <code style="background:#252526;padding:1px 4px;border-radius:3px;font-size:11px;">image fetch</code> workflows. Uploading a file only hosts it; LLDPq-IB does not automatically upgrade switches.</div>
         <div id="activeZtpTarget" style="margin-bottom: 8px; font-size: 12px; color: #888;">Active ZTP Target: checking...</div>
         <div id="imageList" style="margin-bottom: 10px;"><span style="color:#888;">Checking...</span></div>
         <div style="display: flex; gap: 10px; align-items: center;">
@@ -1228,16 +1228,15 @@ async function saveDevicesYamlEditor() {
     <div style="margin-bottom: 20px; padding: 15px; background: #1e1e1e; border-radius: 6px; border: 1px solid #3c3c3c;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <div>
-                <div class="section-title" style="font-size: 14px; margin-bottom: 2px;">Generated Configs</div>
-                <div class="section-desc">NVUE YAML configs in <code style="background:#252526;padding:1px 4px;border-radius:3px;font-size:11px;">/var/www/html/generated_config_folder/</code> — served via HTTP for ZTP <code style="background:#252526;padding:1px 4px;border-radius:3px;font-size:11px;">-t</code> flag.</div>
+                <div class="section-title" style="font-size: 14px; margin-bottom: 2px;">Optional MLNX-OS Config Snippets</div>
+                <div class="section-desc">Per-switch MLNX-OS config snippets in <code style="background:#252526;padding:1px 4px;border-radius:3px;font-size:11px;">/var/www/html/generated_config_folder/</code>. The default ZTP script can fetch <code style="background:#252526;padding:1px 4px;border-radius:3px;font-size:11px;">&lt;hostname&gt;.cfg</code>; LLDPq-IB does not push configs to already-running switches.</div>
             </div>
             <div style="display: flex; gap: 8px;">
-                <label class="btn btn-secondary btn-sm" style="cursor: pointer;" title="Upload YAML config files to generated_config_folder/">
+                <label class="btn btn-secondary btn-sm" style="cursor: pointer;" title="Upload MLNX-OS .cfg/.txt/.yaml files to generated_config_folder/">
                     <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
                     Upload Configs
-                    <input type="file" id="configUpload" style="display: none;" accept=".yaml,.yml" multiple onchange="uploadGeneratedConfigs(this)">
+                    <input type="file" id="configUpload" style="display: none;" accept=".cfg,.txt,.yaml,.yml" multiple onchange="uploadGeneratedConfigs(this)">
                 </label>
-                <button class="btn btn-secondary btn-sm" onclick="syncGeneratedConfigs()" title="Copy from Ansible generated_config_folder">Sync from Ansible</button>
                 <button class="btn btn-secondary btn-sm" onclick="loadGeneratedConfigs()">Refresh</button>
             </div>
         </div>
@@ -1268,63 +1267,16 @@ async function saveDevicesYamlEditor() {
 
 <!-- ==================== TAB 5: UPGRADE ==================== -->
 <div class="tab-content" id="tab-upgrade">
-    <div class="section-desc">Upgrade already-running switches to a newer Cumulus image. ZTP is for new devices; this tab preserves each switch's local <code>/etc/nvue.d/startup.yaml</code> during OS upgrade.</div>
-
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 15px; padding: 15px; background:#1e1e1e; border:1px solid #3c3c3c; border-radius:6px;">
-        <div>
-            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">TARGET IMAGE</label>
-            <select class="form-input" id="upgradeImage" onchange="onUpgradeImageChange()" style="width:100%;"></select>
-        </div>
-        <div>
-            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">TARGET VERSION</label>
-            <input type="text" class="form-input" id="upgradeTargetVersion" oninput="renderUpgradeTable()" style="width:100%;" placeholder="e.g. 5.16.1">
-        </div>
-        <div>
-            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">IMAGE SERVER IP</label>
-            <input type="text" class="form-input input-ip" id="upgradeServerIP" readonly style="width:100%; background:#252526;" placeholder="Uses ZTP Image Server IP">
-            <div id="upgradeServerInfo" style="font-size:11px;color:#666;margin-top:4px;">Uses ZTP Quick Settings IMAGE SERVER IP</div>
-        </div>
-        <div>
-            <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">BATCH SIZE</label>
-            <input type="number" class="form-input" id="upgradeBatchSize" min="1" max="10" value="1" style="width:100%;">
-        </div>
-    </div>
-
-    <div style="display:flex; gap:10px; align-items:center; margin-bottom: 12px; flex-wrap:wrap;">
-        <button class="btn btn-secondary btn-sm" onclick="loadUpgradeCandidates()">Refresh Candidates</button>
-        <button class="btn btn-secondary btn-sm" onclick="upgradeSelectAll(true)">Select All Candidates</button>
-        <button class="btn btn-secondary btn-sm" onclick="upgradeSelectAll(false)">None</button>
-        <button class="btn btn-primary btn-sm" onclick="runUpgradePrecheck()">Precheck Selected</button>
-        <button class="btn btn-warning btn-sm" onclick="startUpgradeJob()" id="btnStartUpgrade">Start Upgrade</button>
-        <button class="btn btn-danger btn-sm" onclick="cancelUpgradeJob()" id="btnCancelUpgrade" style="display:none;">Cancel Queue</button>
-        <label style="font-size:12px;color:#888;display:flex;gap:6px;align-items:center;">
-            <input type="checkbox" id="upgradeBaseAfter" checked style="accent-color:#76b900;"> Deploy Base Config after version verifies
-        </label>
-        <label style="font-size:12px;color:#888;display:flex;gap:6px;align-items:center;">
-            <input type="checkbox" id="upgradeStopOnFailure" checked style="accent-color:#76b900;"> Stop queue on first failure
-        </label>
-        <span id="upgradeStatusText" style="font-size:12px;color:#888;margin-left:auto;"></span>
-    </div>
-
-    <div class="table-wrapper" style="max-height: calc(100vh - 330px);">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th style="width:36px;"><input type="checkbox" id="upgradeSelectAllBox" onchange="upgradeSelectAll(this.checked)" style="accent-color:#76b900;"></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('hostname')">Hostname <span id="usort-hostname" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('ip')">IP <span id="usort-ip" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('role')">Role <span id="usort-role" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('current_version')">Current <span id="usort-current_version" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('target_version')">Target <span id="usort-target_version" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('startup_config')">Startup <span id="usort-startup_config" style="opacity:0.4;">&#9650;</span></th>
-                    <th style="cursor:pointer;" onclick="sortUpgrade('status')">Status <span id="usort-status" style="opacity:0.4;">&#9650;</span></th>
-                    <th>Details</th>
-                </tr>
-            </thead>
-            <tbody id="upgradeBody">
-                <tr><td colspan="9" class="loading">Click Refresh Candidates to load devices...</td></tr>
-            </tbody>
-        </table>
+    <div style="padding: 22px; background:#1e1e1e; border:1px solid #ff9800; border-left:4px solid #ff9800; border-radius:6px; color:#d4d4d4; line-height:1.7;">
+        <div style="font-size:18px; color:#ff9800; font-weight:700; margin-bottom:8px;">MLNX-OS upgrade is manual in this release</div>
+        <p style="margin:0 0 10px 0;">LLDPq-IB can host MLNX-OS image files from the <strong>ZTP</strong> tab, but it does not automatically upgrade already-running switches yet. This is intentional: MLNX-OS image workflows are stateful and should be staged carefully.</p>
+        <p style="margin:0 0 8px 0;">Recommended manual flow on each switch:</p>
+        <pre style="background:#111; color:#d4d4d4; padding:12px; border-radius:4px; overflow-x:auto; font-family:'Cascadia Code','Consolas',monospace; font-size:12px;">enable
+image fetch http://&lt;lldpq-ib-host&gt;/&lt;image-name&gt;.img
+image install &lt;image-name&gt;.img
+show images
+reload</pre>
+        <p style="margin:8px 0 0 0; color:#888; font-size:12px;">Future release target: controlled <code>image fetch</code> / <code>image install</code> orchestration with pre-checks and staged reload windows.</p>
     </div>
 </div>
 
@@ -1332,8 +1284,273 @@ async function saveDevicesYamlEditor() {
 
 <!-- ==================== TAB 6: GUIDE ==================== -->
 <div class="tab-content" id="tab-guide">
-    <div style="overflow-y: auto; max-height: calc(100vh - 160px);">
-    <iframe src="/lldpq-ztp-new-device-flow.html" style="width:100%; height: calc(100vh - 180px); border: none; border-radius: 6px;"></iframe>
+    <style>
+        .guide-wrap   { max-width: 980px; margin: 0 auto; padding: 16px 24px 40px; color: #d4d4d4; font-size: 14px; line-height: 1.65; }
+        .guide-wrap h2 { color: #76b900; font-size: 20px; margin: 28px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #3c3c3c; }
+        .guide-wrap h3 { color: #4fc3f7; font-size: 15px; margin: 22px 0 6px; }
+        .guide-wrap p  { margin: 8px 0; color: #c8c8c8; }
+        .guide-wrap ul, .guide-wrap ol { margin: 8px 0 12px 22px; }
+        .guide-wrap li { margin: 4px 0; }
+        .guide-wrap code { background: #1a1a1a; color: #dcdcaa; padding: 1px 6px; border-radius: 3px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 12.5px; }
+        .guide-wrap pre  { background: #111; color: #d4d4d4; padding: 14px 16px; border-radius: 4px; border-left: 3px solid #76b900; font-family: 'Cascadia Code', Consolas, monospace; font-size: 12.5px; line-height: 1.55; overflow-x: auto; margin: 10px 0; }
+        .guide-wrap .callout { background: rgba(118,185,0,0.05); border-left: 3px solid #76b900; padding: 12px 16px; border-radius: 0 4px 4px 0; margin: 14px 0; font-size: 13px; }
+        .guide-wrap .warning { background: rgba(255,152,0,0.06); border-left: 3px solid #ff9800; padding: 12px 16px; border-radius: 0 4px 4px 0; margin: 14px 0; font-size: 13px; }
+        .guide-wrap .danger  { background: rgba(244,67,54,0.06); border-left: 3px solid #f44336; padding: 12px 16px; border-radius: 0 4px 4px 0; margin: 14px 0; font-size: 13px; }
+        .guide-wrap .toc { background: #252526; border-radius: 6px; padding: 14px 20px; margin: 14px 0 26px; font-size: 13px; }
+        .guide-wrap .toc a { color: #4fc3f7; text-decoration: none; margin-right: 14px; display: inline-block; padding: 3px 0; }
+        .guide-wrap .toc a:hover { color: #76b900; }
+        .guide-wrap .flow-step { background: #252526; border-radius: 6px; padding: 14px 18px; margin: 10px 0; display: flex; gap: 14px; align-items: flex-start; }
+        .guide-wrap .flow-step .n { background: #76b900; color: #000; width: 28px; height: 28px; min-width: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+        .guide-wrap .flow-step .body { flex: 1; }
+        .guide-wrap .flow-step .body strong { color: #fff; }
+        .guide-wrap table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+        .guide-wrap th, .guide-wrap td { border-bottom: 1px solid #333; padding: 8px 10px; text-align: left; }
+        .guide-wrap th { color: #76b900; font-weight: 600; }
+        .guide-wrap td code { font-size: 11.5px; }
+    </style>
+
+    <div class="guide-wrap">
+
+        <h2 style="margin-top:0;">Provisioning an MLNX-OS InfiniBand switch</h2>
+        <p>
+            This guide walks you through the full life-cycle of adding a brand-new
+            <strong>NVIDIA MLNX-OS</strong> InfiniBand switch to a LLDPq-IB-managed
+            fabric &mdash; from racking the bare chassis to seeing it green on
+            <em>Assets</em>, with SSH key auth, hostname, and an entry in
+            <code>devices.yaml</code>.
+        </p>
+
+        <div class="toc">
+            <strong style="color:#76b900;">On this page:</strong><br>
+            <a href="#flow">End-to-end flow</a>
+            <a href="#discover">Discover</a>
+            <a href="#inventory">Inventory</a>
+            <a href="#dhcp">DHCP Server</a>
+            <a href="#ztp">ZTP script</a>
+            <a href="#upgrade">Upgrade</a>
+            <a href="#troubleshooting">Troubleshooting</a>
+        </div>
+
+        <h2 id="flow">End-to-end flow (the happy path)</h2>
+        <div class="flow-step">
+            <div class="n">1</div>
+            <div class="body">
+                <strong>Add a planned binding</strong> in <em>Inventory</em>.
+                Give the future switch its hostname, MAC (printed on the chassis label),
+                and the IP you want DHCP to hand out. Leave the MAC blank if the chassis
+                hasn't arrived yet &mdash; the row stays as <em>Planned</em>.
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="n">2</div>
+            <div class="body">
+                <strong>Start the DHCP server</strong> on the <em>DHCP Server</em> tab.
+                LLDPq-IB ships an isc-dhcp-server inside the container; the Start /
+                Stop / Restart controls are in the page header.
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="n">3</div>
+            <div class="body">
+                <strong>Edit the ZTP script</strong> on the <em>ZTP</em> tab if you
+                need a per-fabric password, hostname-from-serial logic, or extra
+                MLNX-OS config commands. Defaults are sane: SSH key push + hostname
+                set + ZTP disable.
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="n">4</div>
+            <div class="body">
+                <strong>Cable the switch and power it on.</strong> MLNX-OS performs
+                ZTP on first boot: requests an address via DHCP, reads option 239
+                (<code>cumulus-provision-url</code> &mdash; the standard DHCP option
+                number for "fetch this URL"), downloads
+                <code>/mlnxos-ztp.sh</code> from this container, executes it.
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="n">5</div>
+            <div class="body">
+                <strong>Click <em>Run Discover</em></strong> on the <em>Discover</em>
+                tab to confirm the switch is reachable (ping + SSH probe). A green
+                <em>provisioned</em> badge means the SSH key was successfully
+                installed and the chassis is ready for monitoring.
+            </div>
+        </div>
+        <div class="flow-step">
+            <div class="n">6</div>
+            <div class="body">
+                <strong>Wait for the next monitor pass</strong> (cron runs
+                <code>ib-monitor.sh</code> every 10 minutes). After it completes
+                the new switch shows up on the
+                <a href="assets.html" target="_top" style="color:#4fc3f7;">Assets</a> and
+                <a href="topology/main.html" target="_top" style="color:#4fc3f7;">Topology</a>
+                pages, and is included in SM / link-error / transceiver reports.
+            </div>
+        </div>
+
+        <h2 id="discover">Discover tab</h2>
+        <p>
+            Sweeps the configured discovery range (set in the toolbar) and probes
+            each reachable IP via SSH. Each row shows what LLDPq-IB found and how
+            it lines up against the inventory:
+        </p>
+        <table>
+            <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+            <tbody>
+                <tr><td><code>IP</code></td><td>Subnet scan target</td></tr>
+                <tr><td><code>Hostname</code></td><td>Resolved from <code>devices.yaml</code> binding (if any)</td></tr>
+                <tr><td><code>Binding MAC</code></td><td>What you typed in Inventory</td></tr>
+                <tr><td><code>Discovered MAC</code></td><td>What ARP says &mdash; mismatch = hardware swapped</td></tr>
+                <tr><td><code>Type</code></td><td><span style="color:#4caf50;">provisioned</span> = SSH key works &amp; banner looks like MLNX-OS · <span style="color:#ff9800;">not_provisioned</span> = SSH key denied (still on default password) · <span style="color:#888;">other</span> = port 22 closed or different OS · <span style="color:#f44336;">unreachable</span> = no ping reply</td></tr>
+                <tr><td><code>Serial</code></td><td>Pulled from <code>show inventory</code> on the switch</td></tr>
+            </tbody>
+        </table>
+        <div class="callout">
+            <strong>Auto-provision:</strong> when an MLNX-OS box is detected as
+            <em>provisioned</em> AND it has a matching binding AND its hostname is
+            still factory default, LLDPq-IB pushes a
+            <code>cli enable "configure terminal" "hostname &lt;name&gt;" "write memory"</code>
+            sequence to set the hostname. This is gated on the
+            <code>AUTO_SET_HOSTNAME=true</code> default (in <code>/etc/lldpq.conf</code>).
+        </div>
+
+        <h2 id="inventory">Inventory tab (devices.yaml)</h2>
+        <p>
+            The DHCP and ZTP machinery operates on the bindings table you maintain
+            here. Each row is exactly one switch the fabric expects to see.
+        </p>
+        <ul>
+            <li><strong>Add</strong> a row before the chassis ships &mdash; the row
+                stays <em>Planned</em> until DHCP sees the MAC.</li>
+            <li><strong>Edit</strong> the role (<code>spine</code>, <code>leaf</code>,
+                <code>core</code>, <code>border</code>) inline. Roles drive sidebar
+                grouping and topology layout via <code>topology_config.yaml</code>.</li>
+            <li><strong>Save</strong> writes both <code>/etc/dhcp/dhcpd.hosts</code>
+                (host-specific reservations) and <code>devices.yaml</code> (LLDPq-IB
+                inventory). Restart DHCP afterwards.</li>
+            <li><strong>Rebuild devices.yaml</strong> reformats the file: groups by
+                role, sorts by IP, comments-out planned entries. Idempotent.</li>
+            <li>The header bar's <strong>Edit devices.yaml</strong> button opens a
+                raw YAML editor for power users who'd rather hand-edit.</li>
+        </ul>
+
+        <h2 id="dhcp">DHCP Server tab</h2>
+        <p>
+            Generates a complete <code>/etc/dhcp/dhcpd.conf</code> from the form fields:
+        </p>
+        <ul>
+            <li><strong>Subnet + range</strong> for the management VLAN/segment</li>
+            <li><strong>Routers</strong>, <strong>DNS</strong>, <strong>NTP</strong></li>
+            <li><strong>ZTP URL</strong> &mdash; DHCP option 239 &mdash; pre-filled
+                to <code>http://&lt;this-container&gt;/mlnxos-ztp.sh</code></li>
+            <li><strong>Lease times</strong> (defaults: 2 days / 4 days, fine for ZTP)</li>
+        </ul>
+        <p>
+            The Start / Restart / Stop buttons in the page header drive the
+            in-container <code>isc-dhcp-server</code> directly. The DHCP status dot
+            (top-right) reflects whether <code>dhcpd</code> is running.
+        </p>
+        <div class="warning">
+            <strong>Network mode:</strong> DHCP requires the container to run with
+            <code>--network host --privileged</code> (the default in our Quick Start).
+            If you started with <code>-p</code> port mapping instead, DHCP cannot
+            relay; switch back to host networking for provisioning.
+        </div>
+
+        <h2 id="ztp">ZTP script (<code>mlnxos-ztp.sh</code>)</h2>
+        <p>
+            Served as a flat text file at <code>/mlnxos-ztp.sh</code>. MLNX-OS fetches
+            this URL on first boot when DHCP option 239 points at us. The shipped
+            template does:
+        </p>
+        <ol>
+            <li>Resolve target hostname from chassis serial via
+                <code>serial-mapping.txt</code> (optional &mdash; falls back to
+                DHCP-assigned name)</li>
+            <li>Push the container's <strong>SSH public key</strong> to the
+                <code>admin</code> user
+                (<code>ssh client user admin authorized-key sshv2 "ssh-ed25519 ..."</code>)</li>
+            <li>Set the hostname:
+                <code>hostname &lt;name&gt;</code></li>
+            <li>Change the admin password if <code>CHANGE_PASSWORD=true</code>
+                in the script header</li>
+            <li>Optionally fetch a per-switch config from
+                <code>http://&lt;server&gt;/generated_config_folder/&lt;hostname&gt;.cfg</code>
+                and apply it</li>
+            <li><code>write memory</code> &mdash; persist across reboot</li>
+        </ol>
+        <p>
+            Edit the script directly in the tab (it's syntax-highlighted) and
+            <strong>Save</strong>. The next switch that boots picks up the new copy.
+        </p>
+        <div class="callout">
+            <strong>SSH key management:</strong> the public key embedded in
+            <code>mlnxos-ztp.sh</code> is the container's own
+            <code>~/.ssh/id_ed25519.pub</code> (generated on first launch). The
+            <em>SSH Setup</em> controls (top of the ZTP tab) let you regenerate
+            the key, import one you already use, and re-apply it to the script.
+        </div>
+
+        <h2 id="upgrade">Upgrade tab (MLNX-OS image install)</h2>
+        <div class="danger">
+            <strong>Not yet supported in the IB edition.</strong> Calls to
+            <code>action_upgrade_start</code> return a structured error. The
+            Cumulus-flavoured <code>onie-install</code> workflow does not apply
+            to MLNX-OS &mdash; the correct flow is
+            <code>image fetch &lt;url&gt;</code> +
+            <code>image install &lt;name&gt;</code> +
+            <code>reload</code>, executed manually until a native upgrade flow
+            is shipped in a future release.
+        </div>
+
+        <h2 id="troubleshooting">Troubleshooting</h2>
+        <h3>Switch boots but no DHCP lease</h3>
+        <ul>
+            <li>Confirm DHCP is running: status dot must be green</li>
+            <li>Check <code>/var/lib/dhcp/dhcpd.leases</code> for the MAC</li>
+            <li>If on a different VLAN: enable DHCP relay on the upstream router
+                to point at this container's IP</li>
+        </ul>
+
+        <h3>Switch gets an IP but ZTP doesn't fire</h3>
+        <ul>
+            <li>Check the DHCP config has option 239 pointing to
+                <code>http://&lt;server&gt;/mlnxos-ztp.sh</code>. The DHCP option name is
+                historically <code>cumulus-provision-url</code>, but MLNX-OS uses the
+                same option number to fetch the ZTP script.</li>
+            <li>Curl the URL from another host: <code>curl http://&lt;server&gt;/mlnxos-ztp.sh</code></li>
+            <li>MLNX-OS ZTP can be disabled on a switch; on the switch console run
+                <code>show zerotouch</code></li>
+        </ul>
+
+        <h3>Discover shows the switch as <em>not_provisioned</em></h3>
+        <ul>
+            <li>SSH key was rejected. ZTP probably didn't run, or ran before the
+                key was written into the script.</li>
+            <li>Re-run from the switch: <code>ssh admin@switch</code>, log in with the
+                default password, then paste the
+                <code>ssh client user admin authorized-key sshv2 "..."</code> line
+                from this container's
+                <code>docker exec lldpq-ib cat /home/lldpq/.ssh/id_ed25519.pub</code></li>
+        </ul>
+
+        <h3>Wrong hostname after provisioning</h3>
+        <ul>
+            <li><code>serial-mapping.txt</code> in the ZTP tab can pin specific
+                serials to specific hostnames &mdash; format:
+                <code>&lt;SERIAL&gt;&nbsp;&nbsp;&nbsp;&lt;HOSTNAME&gt;</code></li>
+            <li>Without a mapping the switch keeps the hostname DHCP assigned</li>
+        </ul>
+
+        <h3>I want to start over for one switch</h3>
+        <ol>
+            <li>On the switch console:
+                <code>reset factory keep-basic</code> + <code>reload</code></li>
+            <li>Delete the row in <em>Inventory</em>, re-add it (or just edit the MAC)</li>
+            <li>Re-cable, power-cycle &mdash; ZTP fires again on the next boot</li>
+        </ol>
+
     </div>
 </div>
 
@@ -1410,7 +1627,7 @@ let knownRoles = []; // populated from devices.yaml via list-roles API
 let pendingRemovals = []; // hostnames to remove from devices.yaml on save
 
 const BASE_CONFIG_FILES = [
-    { name: 'bash.bashrc', dest: '/etc/bash.bashrc', destAlt: '/home/cumulus/.bashrc', type: 'config', desc: 'Shell aliases & VRF helpers' },
+    { name: 'disabled', dest: '-', type: 'config', desc: 'Base Config is disabled in the IB edition' },
     { name: 'motd.sh', dest: '/etc/profile.d/motd.sh', type: 'config', desc: 'Login banner with BGP status' },
     { name: 'tmux.conf', dest: '/etc/tmux.conf', type: 'config', desc: 'tmux settings' },
     { name: 'nanorc', dest: '/etc/nanorc', type: 'config', desc: 'Editor settings' },
@@ -1478,7 +1695,7 @@ function onTabSwitch(tab) {
         if (generatedConfigs.length === 0) apiCall('list-generated-configs').then(d => { if (d.success) { generatedConfigs = d.configs || []; renderBindings(); } });
     }
     if (tab === 'ztp-script') loadZTPScript();
-    if (tab === 'upgrade') loadUpgradeCandidates();
+    // Upgrade tab is documentation-only in the IB edition for now.
 }
 
 function setDiscoveredFilter(status) {
@@ -2760,7 +2977,7 @@ function renderDiscovered() {
         const gcSet = new Set((generatedConfigs || []).map(c => c.hostname));
         const canDeploy = d.device_type === 'provisioned' && d.hostname && gcSet.has(d.hostname);
         const deployHtml = canDeploy
-            ? `<button class="btn btn-primary btn-sm" onclick="deployGeneratedConfig('${escAttr(d.hostname)}','${escAttr(d.ip)}')" style="font-size:11px;padding:2px 8px;">Deploy</button>`
+            ? '<span style="font-size:11px;color:#888;" title="Config file is hosted for ZTP/manual use; LLDPq-IB does not push configs to running switches.">Config ready</span>'
             : '';
 
         return `<tr>
@@ -2857,25 +3074,13 @@ function ipToNum(ip) {
 function filterDiscovered() { renderDiscovered(); }
 
 async function deployGeneratedConfig(hostname, ip) {
-    showConfirmModal('Deploy Generated Config',
-        `Deploy NVUE config to <strong>${escHtml(hostname)}</strong> (${escHtml(ip)})?<br><br>` +
-        `This will run:<br>` +
-        `<code style="font-size:11px;color:#76b900;">nv config replace + apply + save</code><br><br>` +
-        `<span style="color:#ff9800;">The switch configuration will be fully replaced.</span>`,
-        async () => {
-            showToast(`Deploying config to ${hostname}...`, 'info');
-            const data = await apiCall('deploy-generated-config', { hostname, ip });
-            if (data.success && data.results) {
-                const r = data.results[0];
-                if (r && r.success) {
-                    showToast(`Config deployed to ${hostname}`, 'success');
-                } else {
-                    showToast(`Deploy failed: ${r ? r.error : 'Unknown'}`, 'error');
-                }
-            } else {
-                showToast(`Deploy failed: ${data.error || 'Unknown error'}`, 'error');
-            }
-        }
+    showAlertModal(
+        'Manual config push only',
+        `Generated configs are hosted for ZTP/manual use in the IB edition.<br><br>` +
+        `To apply <strong>${escHtml(hostname)}</strong> manually, fetch the file from ` +
+        `<code>http://&lt;lldpq-ib-host&gt;/generated_config_folder/${escHtml(hostname)}.cfg</code> ` +
+        `inside MLNX-OS configuration mode, review it, and <code>write memory</code>.`,
+        'warning'
     );
 }
 
@@ -3021,7 +3226,7 @@ function renderGeneratedConfigsBadges() {
     const container = document.getElementById('generatedConfigsList');
     if (!container) return;
     if (generatedConfigs.length === 0) {
-        container.innerHTML = '<span style="color:#888;">No configs found in generated_config_folder/. Use "Sync from Ansible" or copy YAML files manually.</span>';
+        container.innerHTML = '<span style="color:#888;">No config snippets found in generated_config_folder/. Upload .cfg/.txt/.yaml files here for ZTP/manual use.</span>';
         document.getElementById('generatedConfigsStatus').textContent = '';
         return;
     }
@@ -3045,8 +3250,8 @@ async function uploadGeneratedConfigs(input) {
     const files = input.files;
     if (!files || files.length === 0) return;
 
-    const yamlFiles = Array.from(files).filter(f => f.name.endsWith('.yaml') || f.name.endsWith('.yml'));
-    if (yamlFiles.length === 0) { showToast('No YAML files selected', 'error'); return; }
+    const yamlFiles = Array.from(files).filter(f => /\.(cfg|txt|ya?ml)$/i.test(f.name));
+    if (yamlFiles.length === 0) { showToast('No supported config files selected (.cfg, .txt, .yaml, .yml)', 'error'); return; }
 
     showToast(`Uploading ${yamlFiles.length} config(s)...`, 'info');
     let ok = 0, fail = 0;
@@ -3073,19 +3278,18 @@ async function uploadGeneratedConfigs(input) {
 }
 
 async function syncGeneratedConfigs() {
-    showToast('Syncing configs from Ansible...', 'info');
-    const data = await apiCall('sync-generated-configs');
-    if (data.success) {
-        showToast(data.message, 'success');
-        loadGeneratedConfigs();
-    } else {
-        showToast('Sync failed: ' + (data.error || 'Unknown error'), 'error');
-    }
+    showAlertModal('Not used in IB edition',
+        'LLDPq-IB does not use Ansible-generated config folders. Upload MLNX-OS config snippets directly, or manage switch configuration with your normal IaC workflow.',
+        'info');
 }
 
 function imageVersionFromName(name) {
-    const m = (name || '').match(/cumulus-linux-([0-9][A-Za-z0-9._-]*?)-/);
-    return m ? m[1] : '';
+    const s = name || '';
+    let m = s.match(/image-[A-Za-z0-9_]+-([0-9][A-Za-z0-9._-]+?)\.(?:bin|img|iso)$/);
+    if (m) return m[1];
+    m = s.match(/mlnx-os-([0-9][A-Za-z0-9._-]+?)\.(?:bin|img|iso)$/i);
+    if (m) return m[1];
+    return '';
 }
 
 function normalizeImageSize(img) {
@@ -3329,9 +3533,9 @@ function toggleScriptEditor() {
 
 // --- Quick Settings ---
 function parseQuickSettings(content) {
-    const osMatch = content.match(/CUMULUS_TARGET_RELEASE=(\S+)/);
-    const pwMatch = content.match(/echo\s+'cumulus:(.+?)'\s*\|\s*chpasswd/);
-    const ipMatch = content.match(/IMAGE_SERVER_HOSTNAME=(\S+)/);
+    const osMatch = content.match(/TARGET_OS_VERSION="?([^"\n]+)"?/);
+    const pwMatch = content.match(/DEFAULT_PASSWORD="?([^"\n]+)"?/);
+    const ipMatch = content.match(/IMAGE_SERVER="?([^"\n]+)"?/);
     // Don't overwrite SSH key from script — loadSSHKey() handles that from actual key file
 
     if (osMatch) document.getElementById('ztpTargetOS').value = osMatch[1];
@@ -3348,27 +3552,27 @@ function escapeBashSingleQuote(s) {
 
 function applyQuickSettings() {
     let content = document.getElementById('ztpEditor').value;
-    const os = document.getElementById('ztpTargetOS').value.trim() || '5.14.0';
-    const pwRaw = document.getElementById('ztpPassword').value.trim() || 'CumulusLinux!';
+    const os = document.getElementById('ztpTargetOS').value.trim() || '3.12.1004';
+    const pwRaw = document.getElementById('ztpPassword').value.trim() || 'Nvidia@123';
     const pw = escapeBashSingleQuote(pwRaw);
     const ip = document.getElementById('ztpImageServer').value.trim() || '192.168.100.200';
     const key = document.getElementById('ztpSSHKey').value.trim();
 
-    const hasSerialLogic = content.includes('resolve_hostname') || content.includes('serial-mapping');
-    const isOldTemplate = content.includes('CUMULUS_TARGET_RELEASE') && !hasSerialLogic;
+    const isMlnxTemplate = content.includes('MLNX-OS Zero Touch') || content.includes('TARGET_OS_VERSION') || content.includes('SSH_PUBLIC_KEY');
+    const isOldTemplate = content.includes('CUMULUS_TARGET_RELEASE');
 
-    // If script is placeholder/empty, generate full template
-    if (!content.includes('CUMULUS_TARGET_RELEASE') && !content.includes('init_ztp')) {
+    // If script is placeholder/empty, generate a fresh MLNX-OS template.
+    if (!isMlnxTemplate && !isOldTemplate) {
         content = generateZTPTemplate(os, pw, ip, key);
     } else if (isOldTemplate) {
-        // Old template without serial config resolution — offer upgrade
+        // Old Cumulus template — offer replacement with the MLNX-OS template.
         showConfirmModal('Upgrade ZTP Script',
-            'Current script uses the old template without serial-based config resolution.<br><br>' +
-            'Upgrade to the new template with:<br>' +
-            '&bull; Serial number detection (<code>decode-syseeprom</code>)<br>' +
+            'Current script looks like the old Cumulus template.<br><br>' +
+            'Replace it with the MLNX-OS template with:<br>' +
+            '&bull; <code>show inventory</code> serial detection<br>' +
             '&bull; Hostname resolution via <code>serial-mapping.txt</code><br>' +
-            '&bull; Auto config download via <code>onie-install -t</code><br>' +
-            '&bull; Direct config apply via <code>nv config replace</code><br><br>' +
+            '&bull; SSH key install via <code>ssh client user admin authorized-key sshv2</code><br>' +
+            '&bull; Optional <code>.cfg</code> fetch/install from <code>generated_config_folder/</code><br><br>' +
             'Quick Settings (OS version, password, IP, SSH key) will be preserved.',
             () => {
                 const newContent = generateZTPTemplate(os, pw, ip, key);
@@ -3379,15 +3583,15 @@ function applyQuickSettings() {
         );
         return;
     } else {
-        // Update existing script via regex (already has serial logic or custom)
-        if (os) content = content.replace(/CUMULUS_TARGET_RELEASE=\S+/, `CUMULUS_TARGET_RELEASE=${os}`);
-        if (pw) content = content.replace(/echo\s+'cumulus:.+?'\s*\|\s*chpasswd/, `echo 'cumulus:${pw}' | chpasswd`);
-        if (ip) content = content.replace(/IMAGE_SERVER_HOSTNAME=\S+/, `IMAGE_SERVER_HOSTNAME=${ip}`);
+        // Update existing MLNX-OS template via regex.
+        if (os) content = content.replace(/^(\s*)TARGET_OS_VERSION=.*$/m, `$1TARGET_OS_VERSION="${os}"`);
+        if (pw) content = content.replace(/^(\s*)DEFAULT_PASSWORD=.*$/m, `$1DEFAULT_PASSWORD="${pw}"`);
+        if (ip) content = content.replace(/^(\s*)IMAGE_SERVER=.*$/m, `$1IMAGE_SERVER="${ip}"`);
         if (key) {
-            if (/^\s*KEY=.*$/m.test(content)) {
-                content = content.replace(/^(\s*)KEY=.*$/m, `$1KEY="${key}"`);
+            if (/^\s*SSH_PUBLIC_KEY=.*$/m.test(content)) {
+                content = content.replace(/^(\s*)SSH_PUBLIC_KEY=.*$/m, `$1SSH_PUBLIC_KEY="${key}"`);
             } else {
-                content = content.replace(/(# Copy SSH keys\s*)/m, `$1\n    KEY="${key}"\n`);
+                content = content.replace(/(# === Operator-edit fields.*?\n)/m, `$1SSH_PUBLIC_KEY="${key}"\n`);
             }
         }
     }
@@ -3399,6 +3603,75 @@ function applyQuickSettings() {
 }
 
 function generateZTPTemplate(os, pw, ip, key) {
+    const sshKey = key || '';
+    return `#!/bin/bash
+# MLNX-OS Zero Touch Provisioning script template
+# Generated by LLDPq-IB Provision
+set -e
+
+IMAGE_SERVER="${ip}"
+TARGET_OS_VERSION="${os}"
+DEFAULT_PASSWORD="${pw}"
+SSH_PUBLIC_KEY="${sshKey}"
+
+ping_until_reachable() {
+    local target=$1
+    local tries=0
+    while ! ping -c2 "$target" >/dev/null 2>&1; do
+        tries=$((tries+1))
+        if [ "$tries" -ge 30 ]; then
+            echo "ERROR: cannot reach $target"
+            exit 1
+        fi
+        sleep 2
+    done
+}
+
+get_serial() {
+    show inventory 2>/dev/null | awk '/CHASSIS/ {print $3; exit}'
+}
+
+resolve_hostname() {
+    local serial="$1"
+    local mapping
+    mapping=$(curl -sf "http://$IMAGE_SERVER/serial-mapping.txt" 2>/dev/null || true)
+    if [ -n "$mapping" ]; then
+        echo "$mapping" | grep -v '^#' | grep -i "$serial" | awk '{print $2}' | head -1
+    fi
+}
+
+ping_until_reachable "$IMAGE_SERVER"
+MY_SERIAL=$(get_serial)
+MY_HOSTNAME=$(resolve_hostname "$MY_SERIAL")
+echo "Serial: \${MY_SERIAL:-unknown}  Resolved hostname: \${MY_HOSTNAME:-(none)}"
+
+{
+    echo "enable"
+    echo "configure terminal"
+    if [ -n "$DEFAULT_PASSWORD" ]; then
+        echo "username admin password $DEFAULT_PASSWORD"
+    fi
+    if [ -n "$SSH_PUBLIC_KEY" ]; then
+        echo "ssh client user admin authorized-key sshv2 \\"$SSH_PUBLIC_KEY\\""
+    fi
+    if [ -n "$MY_HOSTNAME" ]; then
+        echo "hostname $MY_HOSTNAME"
+        CONFIG_URL="http://$IMAGE_SERVER/generated_config_folder/\${MY_HOSTNAME}.cfg"
+        if curl -sf --head "$CONFIG_URL" 2>/dev/null | head -1 | grep -q "200"; then
+            curl -sf "$CONFIG_URL" -o /tmp/lldpq-ib-startup.cfg
+            echo "configuration file install /tmp/lldpq-ib-startup.cfg"
+        fi
+    fi
+    echo "write memory"
+    echo "exit"
+    echo "exit"
+} | cli
+
+echo "MLNX-OS ZTP complete for \${MY_HOSTNAME:-this device}"
+exit 0
+`;
+    /* Legacy Cumulus template retained below only for old saved scripts; this
+       branch is unreachable because the MLNX-OS template returns above. */
     const keyVar = key ? `KEY="${key}"` : 'KEY=""';
     return `#!/bin/bash
 
@@ -4004,11 +4277,17 @@ function showConfirmModal(title, message, callback, btnText, cancelText) {
     _confirmCallback = callback;
     document.getElementById('confirm-modal').classList.add('visible');
 }
+function showAlertModal(title, message, type = 'info') {
+    showConfirmModal(title, message, () => {}, 'OK', 'Cancel');
+    document.querySelector('.confirm-modal-footer .btn-cancel').style.display = 'none';
+}
 function closeConfirmModal() {
     document.getElementById('confirm-modal').classList.remove('visible');
     _confirmCallback = null;
     // Reset cancel button text to default
-    document.querySelector('.confirm-modal-footer .btn-cancel').textContent = 'Cancel';
+    const cancel = document.querySelector('.confirm-modal-footer .btn-cancel');
+    cancel.textContent = 'Cancel';
+    cancel.style.display = '';
 }
 function executeConfirmModal() {
     if (_confirmCallback) _confirmCallback();

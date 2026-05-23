@@ -836,7 +836,7 @@
         <div class="optical-detail" id="opticalDetail" style="display: none;"></div>
     </div>
     
-    <!-- Subnet Manager Tab (BGP equivalent on IB) -->
+    <!-- Subnet Manager Tab -->
     <div class="tab-content" id="tab-bgp">
         <div style="margin-bottom: 12px;">
             <button class="cmd-btn" onclick="loadBGPForVRF()">Refresh SM Info</button>
@@ -1098,7 +1098,7 @@
                 <option value="port 67 or port 68">DHCP</option>
                 <option value="arp">ARP</option>
                 <option value="icmp">ICMP / Ping</option>
-                <option value="port 179">BGP</option>
+                <option value="port 22">SSH</option>
                 <option value="port 22">SSH</option>
                 <option value="port 80 or port 443">HTTP/HTTPS</option>
                 <option value="port 53">DNS</option>
@@ -1148,7 +1148,7 @@
                     </div>
                 </div>
                 <div style="margin-top: 10px;">
-                    <input type="text" id="captureFilter" list="captureFilterPresets" placeholder="Filter: select preset or type custom (e.g. icmp, port 80, host 10.0.0.1)" style="width: 100%; max-width: 500px;">
+                <input type="text" id="captureFilter" list="captureFilterPresets" placeholder="Filter: select preset or type custom (e.g. icmp, port 80, host 10.0.0.1)" style="width: 100%; max-width: 500px;">
                 </div>
                 <div class="form-row" style="margin-top: 15px; gap: 10px;">
                     <button class="cmd-btn" id="btnStopCapture" onclick="stopCapture()" style="background: #c53030; color: #fff; padding: 10px 20px; display: none;">
@@ -1542,7 +1542,7 @@
             if (portsEl) portsEl.innerHTML = '<div class="loading">Click to load port status...</div>';
             if (opticalEl) opticalEl.innerHTML = '<div class="loading">Loading optical data...</div>';
             if (opticalDetailEl) { opticalDetailEl.textContent = ''; opticalDetailEl.style.display = 'none'; }
-            if (bgpEl) bgpEl.innerHTML = '<div class="loading">Click to load BGP data...</div>';
+            if (bgpEl) bgpEl.innerHTML = '<div class="loading">Click to load Subnet Manager data...</div>';
             if (logCardsEl) logCardsEl.innerHTML = '<div class="loading">Loading logs...</div>';
             
             // Reset loaded flags for lazy loading
@@ -2834,7 +2834,8 @@
         }
         
         async function loadBGPForVRF() {
-            // IB has no BGP. Show Subnet Manager info instead.
+            // Show Subnet Manager info. Function name is legacy because older
+            // tab-loading code calls it; the UI label is IB-specific.
             const target = document.getElementById('bgpContent');
             if (!target) return;
             target.innerHTML = '<div class="loading">Loading Subnet Manager info...</div>';
@@ -2902,8 +2903,11 @@
                 if (data.success) {
                     const lines = data.output.split('\n');
                     lines.forEach(line => {
-                        // Match swp interfaces that are down
-                        const match = line.match(/^(swp\S+)\s+\S+\s+down/i);
+                        // Match MLNX-OS IB interfaces that are down
+                        // `show interfaces ib status` rows look like:
+                        //   IB1/1   Down  100Gbps  ...
+                        //   IB1/2/1 Up    4xNDR    ...
+                        const match = line.match(/^\s*(IB\d+\/\d+(?:\/\d+)?)\s+\S+\s+down/i);
                         if (match) {
                             downPorts.push(match[1]);
                         }

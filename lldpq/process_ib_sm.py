@@ -148,6 +148,33 @@ def process_sm(data_dir='monitor-results/ib-sm',
     output_path = os.path.join(output_dir, 'ib_sm_status.json')
     with open(output_path, 'w') as f:
         json.dump(result, f, indent=2)
+
+    # Append a compact time-series record for the SM Health Timeline UI.
+    # Keep 7 days of samples (10-min cron => ~1008 points).
+    history_path = os.path.join(output_dir, 'ib_sm_history.json')
+    history = []
+    try:
+        if os.path.exists(history_path):
+            with open(history_path, 'r') as f:
+                old = json.load(f)
+            history = old.get('history', []) if isinstance(old, dict) else []
+    except Exception:
+        history = []
+
+    sample = {
+        'ts': result['last_update'],
+        'master_guid': master_guid,
+        'master_count': result['summary']['master_count'],
+        'standby_count': result['summary']['standby_count'],
+        'has_master': result['summary']['has_master'],
+        'has_redundancy': result['summary']['has_redundancy'],
+        'disagreements': len(disagreements),
+        'devices_polled': len(per_device),
+    }
+    history.append(sample)
+    history = history[-1008:]
+    with open(history_path, 'w') as f:
+        json.dump({'last_update': result['last_update'], 'history': history}, f, indent=2)
     
     print(f"IB SM: master={master_guid or 'NONE'}, "
           f"standby={result['summary']['standby_count']}, "

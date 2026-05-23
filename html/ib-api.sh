@@ -370,6 +370,117 @@ finally:
 PYTHON_END
         ;;
 
+    # -------------------------------------------------------------------
+    # ibtracert: run `ib ibtracert -G <src_guid> <dst_guid>` from the
+    # first reachable switch in devices.yaml. Parses the hop-by-hop output
+    # back into the {to_guid, lp, rp, speed} array shape that the BFS path
+    # in tracepath.html consumes.
+    # Body: JSON { src_guid: "0x...", dst_guid: "0x..." }
+    # -------------------------------------------------------------------
+    ibtracert)
+        read -r POST_DATA
+        export POST_DATA
+        python3 << 'PYTHON_END'
+import json, os, re, subprocess
+
+try:
+    body = json.loads(os.environ.get('POST_DATA') or '{}')
+except Exception:
+    body = {}
+src = (body.get('src_guid') or '').strip()
+dst = (body.get('dst_guid') or '').strip()
+if not re.match(r'^0x[0-9a-fA-F]{12,16}$', src) or not re.match(r'^0x[0-9a-fA-F]{12,16}$', dst):
+    print(json.dumps({'success': False, 'error': 'src_guid and dst_guid must be 0x-prefixed hex'}))
+    raise SystemExit
+
+LLDPQ_DIR = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+
+# Pick the first reachable switch (assets.ini) -- if none, bail out.
+import os.path
+asset_paths = ['/var/www/html/assets.ini', os.path.join(LLDPQ_DIR, 'assets.ini')]
+switch_host = None
+for ap in asset_paths:
+    if not os.path.exists(ap):
+        continue
+    try:
+        with open(ap) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split('\t')
+                if len(parts) >= 1 and parts[0]:
+                    switch_host = parts[0]
+                    break
+        if switch_host:
+            break
+    except Exception:
+        pass
+if not switch_host:
+    print(json.dumps({'success': False,
+        'error': 'No reachable switch in assets.ini -- cannot run ibtracert. '
+                 'Switch back to BFS mode, or run ib-monitor.sh once.'}))
+    raise SystemExit
+
+LLDPQ_USER = os.environ.get('LLDPQ_USER', 'lldpq')
+remote_cmd = f'ib ibtracert -G {src} {dst}'
+try:
+    r = subprocess.run(
+        ['sudo', '-u', LLDPQ_USER, 'ssh',
+         '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+         '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
+         '-o', 'LogLevel=ERROR', f'admin@{switch_host}', remote_cmd],
+        capture_output=True, text=True, timeout=25,
+    )
+except subprocess.TimeoutExpired:
+    print(json.dumps({'success': False, 'error': 'ibtracert timed out'}))
+    raise SystemExit
+except Exception as e:
+    print(json.dumps({'success': False, 'error': f'SSH error: {e}'}))
+    raise SystemExit
+
+if r.returncode != 0:
+    print(json.dumps({'success': False,
+        'error': f'ibtracert exited {r.returncode}: ' + (r.stderr or r.stdout)[:300]}))
+    raise SystemExit
+
+# ibtracert output format (one block per hop):
+#   From <type> {0x..lguid..} portnum N lid <L>
+#   [N] -> <type> port {0x..nguid..}[M] lid <L>
+hop_re = re.compile(
+    r'-\>\s+\w+\s+port\s+\{(?P<guid>0x[0-9a-fA-F]+)\}\[(?P<rp>\d+)\]',
+    re.IGNORECASE,
+)
+out_re = re.compile(r'\[(?P<lp>\d+)\]\s+->', re.IGNORECASE)
+
+hops = []
+local_port = None
+for line in r.stdout.splitlines():
+    m_out = out_re.search(line)
+    if m_out:
+        local_port = int(m_out.group(1))
+    m_hop = hop_re.search(line)
+    if m_hop:
+        hops.append({
+            'to_guid': m_hop.group('guid'),
+            'lp':      local_port,
+            'rp':      int(m_hop.group('rp')),
+            'speed':   '',     # ibtracert does not include speed
+        })
+        local_port = None
+
+print(json.dumps({
+    'success': True,
+    'via_switch': switch_host,
+    'src_guid': src,
+    'dst_guid': dst,
+    'hop_count': len(hops),
+    'path': hops,
+    'raw': r.stdout[-1000:],   # truncate raw text
+}))
+PYTHON_END
+        ;;
+
     *)
         echo "{\"success\": false, \"error\": \"Unknown action: ${ACTION}\"}"
         ;;

@@ -187,6 +187,18 @@ async function loadAssets() {
         }
     }
 
+    // Demo / first-run safety: if the CGI list-devices endpoint is not
+    // available (for example when viewing through a static dev server), use
+    // assets.ini as a fallback authoritative list so the page is not empty.
+    if (devicesFlat.length === 0) {
+        devicesFlat = Object.values(reachable).map(r => ({
+            hostname: r.hostname,
+            ip: r.ip,
+            role: 'switch',
+            username: 'admin',
+        }));
+    }
+
     // Merge: every device in devices.yaml gets a row; populate runtime data from reachable
     allAssets = devicesFlat.map(d => {
         const r = reachable[d.hostname] || {};
