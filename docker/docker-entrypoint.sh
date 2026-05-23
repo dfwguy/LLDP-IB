@@ -218,6 +218,11 @@ for key_val in "AUTO_BASE_CONFIG=false" "AUTO_ZTP_DISABLE=true" "AUTO_SET_HOSTNA
     key="${key_val%%=*}"
     grep -q "^${key}=" /etc/lldpq.conf 2>/dev/null || echo "$key_val" >> /etc/lldpq.conf
 done
+if ! grep -q '^LLDPQ_DEMO=' /etc/lldpq.conf 2>/dev/null; then
+    echo "LLDPQ_DEMO=${LLDPQ_DEMO:-false}" >> /etc/lldpq.conf
+else
+    sed -i "s|^LLDPQ_DEMO=.*|LLDPQ_DEMO=${LLDPQ_DEMO:-false}|" /etc/lldpq.conf
+fi
 
 # Default dhcpd.conf if not configured yet (Ubuntu sample is useless)
 if ! grep -q 'cumulus-provision-url\|LLDPq' /etc/dhcp/dhcpd.conf 2>/dev/null; then

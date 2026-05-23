@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Setup</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <script src="css/lldpq-ib.js"></script>
+    <style>
+        .setup-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap:16px; }
+        .setup-card { background:#252526; border-radius:8px; padding:18px; border:1px solid #3c3c3c; }
+        .setup-card h3 { color:#76b900; font-size:15px; margin:0 0 8px; display:flex; gap:8px; align-items:center; }
+        .setup-card p { color:#aaa; font-size:13px; line-height:1.55; margin:8px 0; }
+        .setup-row { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid #333; font-size:13px; }
+        .setup-row .k { color:#888; }
+        .setup-row .v { color:#d4d4d4; text-align:right; }
+        .setup-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+        .setup-actions button { border:0; border-radius:4px; padding:8px 12px; cursor:pointer; font-size:13px; }
+        .setup-actions .primary { background:#76b900; color:#000; font-weight:600; }
+        .setup-actions .secondary { background:#404040; color:#fff; }
+        textarea.setup-textarea { width:100%; min-height:280px; background:#111; color:#d4d4d4; border:1px solid #333; border-radius:4px; padding:12px; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; resize:vertical; }
+        .copy-box { background:#111; color:#dcdcaa; border:1px solid #333; border-radius:4px; padding:10px; font-family:'Cascadia Code',Consolas,monospace; font-size:11px; word-break:break-all; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Setup</div>
+            <div class="last-updated" id="last-updated">Onboarding checklist for LLDPq-IB production deployments</div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="loadStatus()">Refresh</button>
+        </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="setup-grid">
+        <div class="setup-card">
+            <h3>1. Mode</h3>
+            <div class="setup-row"><span class="k">Demo mode</span><span class="v" id="mode-demo">-</span></div>
+            <div class="setup-row"><span class="k">Topology collected</span><span class="v" id="mode-topology">-</span></div>
+            <div class="setup-row"><span class="k">Health score ready</span><span class="v" id="mode-health">-</span></div>
+            <p>Demo mode is static and cron is disabled. Production mode collects data every 10 minutes.</p>
+        </div>
+
+        <div class="setup-card">
+            <h3>2. Inventory (devices.yaml)</h3>
+            <div class="setup-row"><span class="k">File</span><span class="v" id="inv-path">-</span></div>
+            <div class="setup-row"><span class="k">Devices</span><span class="v" id="inv-count">-</span></div>
+            <div class="setup-row"><span class="k">Roles</span><span class="v" id="inv-roles">-</span></div>
+            <div class="setup-actions">
+                <button class="primary" onclick="openDevicesEditor()">Edit devices.yaml</button>
+                <button class="secondary" onclick="location.href='assets.html'">Open Assets</button>
+            </div>
+        </div>
+
+        <div class="setup-card">
+            <h3>3. SSH Key</h3>
+            <div class="setup-row"><span class="k">Key exists</span><span class="v" id="ssh-exists">-</span></div>
+            <div class="setup-row"><span class="k">Key file</span><span class="v" id="ssh-file">-</span></div>
+            <div class="copy-box" id="ssh-key-box">Loading...</div>
+            <p>Paste this on each MLNX-OS switch:</p>
+            <div class="copy-box" id="ssh-cmd-box"></div>
+            <div class="setup-actions">
+                <button class="primary" onclick="generateSSHKey()">Generate key</button>
+                <button class="secondary" onclick="copyText('ssh-key-box')">Copy key</button>
+                <button class="secondary" onclick="copyText('ssh-cmd-box')">Copy MLNX-OS command</button>
+            </div>
+        </div>
+
+        <div class="setup-card">
+            <h3>4. UFM (optional)</h3>
+            <div class="setup-row"><span class="k">Configured</span><span class="v" id="ufm-configured">-</span></div>
+            <div class="setup-row"><span class="k">URL</span><span class="v" id="ufm-url">-</span></div>
+            <div class="setup-row"><span class="k">Token</span><span class="v" id="ufm-token">-</span></div>
+            <p>UFM adds alert validation, BER history, and topology cross-check.</p>
+            <div class="setup-actions">
+                <button class="primary" onclick="location.href='ufm-status.html'">Configure UFM</button>
+            </div>
+        </div>
+
+        <div class="setup-card">
+            <h3>5. First Collection</h3>
+            <p>Queues a one-time assets + monitor pass. In production, the trigger daemon runs it within about one minute. In demo mode this is intentionally disabled.</p>
+            <div class="setup-actions">
+                <button class="primary" onclick="queueCollection()">Run first collection</button>
+                <button class="secondary" onclick="location.href='start.html'">Open Fabric</button>
+                <button class="secondary" onclick="location.href='topology/main.html'">Open Topology</button>
+            </div>
+            <div id="collection-status" style="margin-top:10px;color:#888;font-size:12px;"></div>
+        </div>
+    </div>
+
+    <div id="devices-editor" style="display:none;margin-top:18px;" class="setup-card">
+        <h3>Edit devices.yaml</h3>
+        <textarea class="setup-textarea" id="devices-yaml"></textarea>
+        <div class="setup-actions">
+            <button class="primary" onclick="saveDevices()">Save devices.yaml</button>
+            <button class="secondary" onclick="closeDevicesEditor()">Close</button>
+        </div>
+        <div id="devices-status" style="margin-top:8px;color:#888;font-size:12px;"></div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const ok = await LLDPqAuth.check();
+    if (!ok) return;
+    loadStatus();
+});
+
+function yn(v) {
+    return v ? '<span class="badge badge-green">yes</span>' : '<span class="badge badge-gray">no</span>';
+}
+
+async function loadStatus() {
+    const r = await fetch('/setup-api.sh?action=status', {cache:'no-store'});
+    const data = await r.json();
+    if (!data.success) throw new Error(data.error || 'setup status failed');
+
+    document.getElementById('mode-demo').innerHTML = data.demo_mode ? '<span class="badge badge-yellow">DEMO</span>' : '<span class="badge badge-green">production</span>';
+    document.getElementById('mode-topology').innerHTML = yn(data.monitoring.has_topology);
+    document.getElementById('mode-health').innerHTML = yn(data.monitoring.has_health);
+    document.getElementById('inv-path').textContent = data.devices_yaml.path || '-';
+    document.getElementById('inv-count').textContent = data.devices_yaml.count || 0;
+    document.getElementById('inv-roles').textContent = Object.entries(data.devices_yaml.roles || {}).map(([r,c]) => `${c} ${r}`).join(', ') || '-';
+    document.getElementById('ssh-exists').innerHTML = yn(data.ssh_key.exists);
+    document.getElementById('ssh-file').textContent = data.ssh_key.key_file || '-';
+    document.getElementById('ssh-key-box').textContent = data.ssh_key.public_key || '(no key yet)';
+    document.getElementById('ssh-cmd-box').textContent = data.ssh_key.public_key
+        ? `ssh client user admin authorized-key sshv2 "${data.ssh_key.public_key}"`
+        : '(generate a key first)';
+    document.getElementById('ufm-configured').innerHTML = yn(data.ufm.configured);
+    document.getElementById('ufm-url').textContent = data.ufm.url || '-';
+    document.getElementById('ufm-token').innerHTML = data.ufm.token_set ? '<span class="badge badge-green">set</span>' : '<span class="badge badge-gray">unset</span>';
+
+    document.getElementById('banner').innerHTML = data.demo_mode
+        ? '<div class="alert-box alert-info"><strong>Demo mode is active.</strong> Fake fabric data is static and collection is disabled by design.</div>'
+        : '';
+}
+
+async function openDevicesEditor() {
+    const box = document.getElementById('devices-editor');
+    box.style.display = '';
+    const ta = document.getElementById('devices-yaml');
+    ta.value = 'Loading...';
+    const r = await fetch('/edit-devices', {cache:'no-store'});
+    const data = await r.json();
+    ta.value = data.success ? (data.content || '') : '# Error: ' + (data.error || 'failed');
+    box.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function closeDevicesEditor() {
+    document.getElementById('devices-editor').style.display = 'none';
+}
+
+async function saveDevices() {
+    const status = document.getElementById('devices-status');
+    status.style.color = '#888'; status.textContent = 'Saving...';
+    const r = await fetch('/edit-devices', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({content: document.getElementById('devices-yaml').value})
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.success) {
+        status.style.color = '#4caf50'; status.textContent = data.message || 'Saved';
+        loadStatus();
+    } else {
+        status.style.color = '#f44336'; status.textContent = data.error || 'Save failed';
+    }
+}
+
+async function generateSSHKey() {
+    const ok = await LLDPqUI.confirm({title:'Generate SSH key', message:'Generate a new collector SSH key? If a key already exists it may be replaced.', confirmText:'Generate'});
+    if (!ok) return;
+    const r = await fetch('/provision-api.sh?action=generate-ssh-key', {method:'POST'});
+    const data = await r.json().catch(() => ({}));
+    if (!data.success) {
+        await LLDPqUI.alert({title:'Key generation failed', message:data.error || 'unknown', type:'error'});
+        return;
+    }
+    await loadStatus();
+}
+
+async function queueCollection() {
+    const r = await fetch('/setup-api.sh?action=queue-collection', {method:'POST'});
+    const data = await r.json().catch(() => ({}));
+    const el = document.getElementById('collection-status');
+    if (data.success) {
+        el.style.color = '#4caf50'; el.textContent = data.message || 'Queued';
+    } else {
+        el.style.color = '#ff9800'; el.textContent = data.error || 'Could not queue collection';
+    }
+}
+
+function copyText(id) {
+    const text = document.getElementById(id).textContent;
+    navigator.clipboard.writeText(text);
+}
+</script>
+</body>
+</html>

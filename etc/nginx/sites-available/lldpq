@@ -178,6 +178,17 @@ server {
             # UFM may take time to respond on large fabrics
             fastcgi_read_timeout 60;
         }
+
+        # Setup / onboarding helper endpoint
+        location = /setup-api.sh {
+            fastcgi_pass unix:/var/run/fcgiwrap.socket;
+            fastcgi_param SCRIPT_FILENAME /var/www/html/setup-api.sh;
+            fastcgi_param QUERY_STRING $query_string;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param CONTENT_TYPE $content_type;
+            fastcgi_param CONTENT_LENGTH $content_length;
+            fastcgi_param HTTP_COOKIE $http_cookie;
+        }
         
         # AI Assistant API endpoint (LLM proxy + fabric context)
         # NOTE: ai.html / ai-api.sh still carry the LLDPq (Ethernet) BGP/EVPN
