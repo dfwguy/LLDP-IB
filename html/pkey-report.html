@@ -6,12 +6,16 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <script src="css/lldpq-ib.js"></script>
 </head>
 <body>
     <div class="page-header">
         <div>
             <div class="page-title">P_Key (Partition) Report</div>
             <div class="last-updated" id="last-updated"></div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary admin-only" onclick="openPolicyEditor()">Edit expected_pkeys.yaml</button>
         </div>
     </div>
 
@@ -59,6 +63,29 @@
                 <tr><td colspan="8"><div class="loading"><div class="spinner"></div>Loading P_Key data...</div></td></tr>
             </tbody>
         </table>
+    </div>
+
+    <div id="policy-editor-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;display:none;align-items:center;justify-content:center;" onclick="if(event.target===this)closePolicyEditor()">
+        <div style="background:#1e1e1e;border:1px solid #404040;border-radius:8px;width:80vw;max-width:1100px;height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 50px rgba(0,0,0,0.6);">
+            <div style="padding:14px 20px;background:#252526;border-bottom:1px solid #3c3c3c;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <span style="color:#76b900;font-weight:600;font-size:14px;">Edit expected_pkeys.yaml</span>
+                    <span id="policy-editor-path" style="color:#888;font-size:12px;font-family:monospace;margin-left:12px;"></span>
+                </div>
+                <button onclick="closePolicyEditor()" style="background:none;border:0;color:#aaa;font-size:22px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;padding:12px 20px;gap:8px;min-height:0;">
+                <textarea id="policy-editor-textarea" spellcheck="false" placeholder="Loading..."
+                    style="flex:1;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;padding:12px;font-family:'Cascadia Code',Consolas,'Courier New',monospace;font-size:13px;line-height:1.5;resize:none;tab-size:2;"></textarea>
+            </div>
+            <div style="padding:12px 20px;background:#252526;border-top:1px solid #3c3c3c;border-radius:0 0 8px 8px;display:flex;align-items:center;justify-content:space-between;">
+                <div id="policy-editor-status" style="color:#888;font-size:12px;"></div>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="closePolicyEditor()" style="padding:7px 18px;border:0;border-radius:4px;cursor:pointer;font-size:13px;background:#404040;color:#fff;">Cancel</button>
+                    <button id="policy-editor-save" onclick="savePolicyEditor()" style="padding:7px 18px;border:0;border-radius:4px;cursor:pointer;font-size:13px;background:#76b900;color:#000;font-weight:600;">Save</button>
+                </div>
+            </div>
+        </div>
     </div>
 
 <script>
@@ -176,6 +203,58 @@ function renderTable() {
             <td>${status}</td>
         </tr>`;
     }).join('');
+}
+
+async function openPolicyEditor() {
+    document.getElementById('policy-editor-overlay').style.display = 'flex';
+    const ta = document.getElementById('policy-editor-textarea');
+    const status = document.getElementById('policy-editor-status');
+    const saveBtn = document.getElementById('policy-editor-save');
+    ta.value = 'Loading...'; ta.disabled = true; saveBtn.disabled = true;
+    status.textContent = ''; status.style.color = '#888';
+    try {
+        const r = await fetch('/edit-expected-pkeys', {cache:'no-store'});
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Server refused request');
+        document.getElementById('policy-editor-path').textContent = data.path || 'expected_pkeys.yaml';
+        ta.value = data.content || '';
+        ta.disabled = false; saveBtn.disabled = false;
+        status.textContent = `Loaded ${ta.value.length} bytes`;
+    } catch (e) {
+        ta.value = ''; ta.disabled = true;
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+    }
+}
+
+function closePolicyEditor() {
+    document.getElementById('policy-editor-overlay').style.display = 'none';
+}
+
+async function savePolicyEditor() {
+    const ta = document.getElementById('policy-editor-textarea');
+    const status = document.getElementById('policy-editor-status');
+    const saveBtn = document.getElementById('policy-editor-save');
+    saveBtn.disabled = true;
+    status.style.color = '#888';
+    status.textContent = 'Saving...';
+    try {
+        const r = await fetch('/edit-expected-pkeys', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content: ta.value}),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.success === false) throw new Error(data.error || `HTTP ${r.status}`);
+        status.style.color = '#4caf50';
+        status.textContent = data.message || 'Saved';
+        setTimeout(() => closePolicyEditor(), 700);
+    } catch (e) {
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+        saveBtn.disabled = false;
+    }
 }
 </script>
 </body>

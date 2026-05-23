@@ -104,11 +104,12 @@ RUN mkdir -p /opt/lldpq-demo/monitor-results/snapshots \
     && cd /opt/lldpq-demo \
     && python3 /home/lldpq/lldpq/generate_hardware_html.py \
     && python3 /home/lldpq/lldpq/process_log_data.py \
+    && python3 /home/lldpq/lldpq/process_fabric_health.py \
     && python3 -c "import json, os, datetime; \
         mr='/opt/lldpq-demo/monitor-results'; \
         load=lambda n: (json.load(open(os.path.join(mr,n))) if os.path.exists(os.path.join(mr,n)) else None); \
         ts=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'); \
-        snap={'generated_at':ts,'ib_topology':load('ib_topology.json'),'ib_sm_status':load('ib_sm_status.json'),'ib_link_errors':load('ib_link_errors.json'),'ib_pkey':load('ib_pkey.json'),'transceiver_inventory':load('transceiver_inventory.json'),'log_summary':load('log_summary.json')}; \
+        snap={'generated_at':ts,'ib_topology':load('ib_topology.json'),'ib_sm_status':load('ib_sm_status.json'),'ib_sm_history':load('ib_sm_history.json'),'ib_link_errors':load('ib_link_errors.json'),'fabric_health':load('fabric_health.json'),'ib_pkey':load('ib_pkey.json'),'transceiver_inventory':load('transceiver_inventory.json'),'log_summary':load('log_summary.json')}; \
         fn=os.path.join(mr,'snapshots','lldpq-ib-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '.json'); \
         open(fn,'w').write(json.dumps(snap, separators=(',',':'))); \
         print('demo snapshot:', fn)" \

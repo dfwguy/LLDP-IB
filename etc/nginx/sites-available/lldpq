@@ -128,6 +128,17 @@ server {
             fastcgi_param CONTENT_LENGTH $content_length;
             fastcgi_param HTTP_COOKIE $http_cookie;
         }
+
+        # Edit expected_pkeys.yaml endpoint with fcgiwrap
+        location = /edit-expected-pkeys {
+            fastcgi_pass unix:/var/run/fcgiwrap.socket;
+            fastcgi_param SCRIPT_FILENAME /var/www/html/edit-expected-pkeys.sh;
+            fastcgi_param QUERY_STRING $query_string;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param CONTENT_TYPE $content_type;
+            fastcgi_param CONTENT_LENGTH $content_length;
+            fastcgi_param HTTP_COOKIE $http_cookie;
+        }
         
         # Authentication API endpoint with fcgiwrap
         location = /auth-api {

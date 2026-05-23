@@ -71,6 +71,7 @@ function convertToCytoscapeFormat(topologyData) {
             data: {
                 id: 'n' + node.id,
                 label: node.name,
+                guid: node.guid || '',
                 level: node.layerSortPreference || 5,
                 icon: iconType,
                 iconChar: iconChar,

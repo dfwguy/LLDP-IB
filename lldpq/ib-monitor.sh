@@ -317,6 +317,11 @@ ANALYZE_END=$(date +%s)
 ANALYZE_DURATION=$((ANALYZE_END - ANALYZE_START))
 echo "Analysis complete in ${ANALYZE_DURATION}s"
 
+# Aggregate high-level fabric health after individual parsers finish.
+if [ -f "$SCRIPT_DIR/process_fabric_health.py" ]; then
+    python3 "$SCRIPT_DIR/process_fabric_health.py" >/dev/null 2>&1 || true
+fi
+
 # Generate the cytoscape-friendly topology.js (must run AFTER parsers, since
 # it consumes monitor-results/ib_topology.json + ib_link_errors.json).
 WEB_ROOT_FOR_TOPO="${WEB_ROOT:-/var/www/html}"
@@ -351,7 +356,9 @@ snap = {
                           .strftime("%Y-%m-%dT%H:%M:%SZ"),
     "ib_topology":     load("ib_topology.json"),
     "ib_sm_status":    load("ib_sm_status.json"),
+    "ib_sm_history":   load("ib_sm_history.json"),
     "ib_link_errors":  load("ib_link_errors.json"),
+    "fabric_health":   load("fabric_health.json"),
     "ib_pkey":         load("ib_pkey.json"),
     "transceiver_inventory": load("transceiver_inventory.json"),
     "log_summary":     load("log_summary.json"),

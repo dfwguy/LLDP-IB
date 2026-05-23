@@ -252,6 +252,11 @@ def build_topology(
     device_info = parse_assets_file(assets_path)
     host_names, host_patterns = parse_endpoint_hosts(devices_yaml_path)
     guid_to_node, ib_links = load_ib_topology(ib_topology_path)
+    name_to_guid = {}
+    for g, n in guid_to_node.items():
+        name = n.get("description") or n.get("hostname")
+        if name:
+            name_to_guid[name] = g
     port_errors = load_link_errors(link_errors_path)
     dot_edges = parse_topology_dot(dot_path)
 
@@ -269,6 +274,7 @@ def build_topology(
         nodes.append({
             "id":             nid,
             "name":           name,
+            "guid":           name_to_guid.get(name, ""),
             "icon":           icon,
             "layerSortPreference": layer,
             "primaryIP":      info.get("primaryIP", "N/A") or "N/A",
@@ -289,6 +295,7 @@ def build_topology(
         nodes.append({
             "id":             nid,
             "name":           name,
+            "guid":           guid,
             "icon":           icon,
             "layerSortPreference": layer,
             "primaryIP":      "N/A",
@@ -320,6 +327,7 @@ def build_topology(
                 nodes.append({
                     "id":             nid,
                     "name":           hn,
+                    "guid":           name_to_guid.get(hn, ""),
                     "icon":           icon,
                     "layerSortPreference": layer,
                     "primaryIP":      "N/A",
@@ -338,6 +346,7 @@ def build_topology(
             nodes.append({
                 "id":             nid,
                 "name":           hn,
+                "guid":           name_to_guid.get(hn, ""),
                 "icon":           icon,
                 "layerSortPreference": layer,
                 "primaryIP":      "N/A",
@@ -369,6 +378,7 @@ def build_topology(
         nodes.append({
             "id":             nid,
             "name":           name,
+            "guid":           name_to_guid.get(name, ""),
             "icon":           icon,
             "layerSortPreference": layer,
             "primaryIP":      "N/A",

@@ -498,6 +498,17 @@
                 <input type="radio" name="ibOverlay" value="sharp" onchange="setIBOverlay(this.value)">
                 <span>SHARP</span>
             </label>
+            <label class="toggle" title="Highlight devices that report the selected P_Key">
+                <input type="radio" name="ibOverlay" value="pkey" onchange="setIBOverlay(this.value)">
+                <span>P_Key</span>
+            </label>
+            <label class="toggle" title="Highlight local-only / UFM-only topology differences">
+                <input type="radio" name="ibOverlay" value="ufm" onchange="setIBOverlay(this.value)">
+                <span>UFM Diff</span>
+            </label>
+            <select id="pkeyOverlaySelect" onchange="setIBOverlay('pkey')" style="display:none;background:#3a3a3a;color:#ccc;border:1px solid #555;border-radius:3px;padding:4px 8px;font-size:12px;">
+                <option value="">P_Key...</option>
+            </select>
         </div>
 
         <div class="spacer"></div>
@@ -536,8 +547,10 @@
                 });
             });
             graph.nodes().forEach(n => {
-                n.style({'border-width': 0, 'border-color': '#222'});
+                n.style({'border-width': 0, 'border-color': '#222', 'opacity': 1});
             });
+            const pkeySelect = document.getElementById('pkeyOverlaySelect');
+            if (pkeySelect) pkeySelect.style.display = mode === 'pkey' ? '' : 'none';
 
             if (mode === 'none') return;
 
@@ -575,6 +588,55 @@
                             n.style({'border-width': 5, 'border-color': '#ff9800'});
                         }
                     });
+                } catch (e) {}
+            }
+
+            if (mode === 'pkey') {
+                try {
+                    const r = await fetch('/monitor-results/ib_pkey.json?t=' + Date.now(), {cache:'no-store'});
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    const pkeys = Array.isArray(data.pkeys) ? data.pkeys : [];
+                    const select = document.getElementById('pkeyOverlaySelect');
+                    if (select && select.options.length <= 1) {
+                        select.innerHTML = '<option value="">P_Key...</option>' + pkeys.map(p =>
+                            `<option value="${p.pkey}">${p.pkey} ${(p.names || []).join(', ')}</option>`
+                        ).join('');
+                    }
+                    const selected = select && select.value ? select.value : (pkeys[0] && pkeys[0].pkey);
+                    if (select && selected) select.value = selected;
+                    const rec = pkeys.find(p => p.pkey === selected);
+                    const names = new Set((rec && rec.devices) || []);
+                    graph.nodes().forEach(n => {
+                        if (!names.size || names.has(n.data('label'))) {
+                            n.style({'border-width': 5, 'border-color': '#76b900', 'opacity': 1});
+                        } else {
+                            n.style({'opacity': 0.22});
+                        }
+                    });
+                } catch (e) {}
+            }
+
+            if (mode === 'ufm') {
+                try {
+                    const r = await fetch('/ufm-api.sh?action=validate-topology&t=' + Date.now(), {cache:'no-store'});
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    if (!data.success) {
+                        document.getElementById('status').textContent =
+                            'UFM diff unavailable: ' + (data.error || 'not configured');
+                        document.querySelector('input[name="ibOverlay"][value="none"]').checked = true;
+                        return setIBOverlay('none');
+                    }
+                    const onlyLocal = new Set((data.only_in_local || []).map(g => String(g).toLowerCase()));
+                    const onlyUfm = new Set((data.only_in_ufm || []).map(g => String(g).toLowerCase()));
+                    graph.nodes().forEach(n => {
+                        const g = String(n.data('guid') || '').toLowerCase();
+                        if (onlyLocal.has(g)) n.style({'border-width': 5, 'border-color': '#ff9800'});
+                    });
+                    if (onlyUfm.size) {
+                        console.log('UFM-only GUIDs (not drawn locally):', Array.from(onlyUfm));
+                    }
                 } catch (e) {}
             }
         }
