@@ -8,6 +8,9 @@
     <script src="css/auth.js"></script>
     <script src="css/lldpq-ib.js"></script>
     <style>
+        .diag-card { background:#252526; border-radius:6px; padding:16px; margin-bottom:16px; }
+        .diag-card h3 { color:#76b900; font-size:14px; margin:0 0 12px; }
+        .diag-card .sub { color:#888; font-size:12px; margin:-6px 0 12px; }
         .diag-grid { display:grid; grid-template-columns: 320px 1fr; gap:16px; align-items:start; }
         .diag-panel { background:#252526; border-radius:6px; padding:16px; }
         .diag-panel h3 { color:#76b900; font-size:14px; margin:0 0 10px; }
@@ -19,23 +22,111 @@
         .preset:hover { background:#3d3d3d; color:#fff; }
         .preset.danger { border-left:3px solid #f44336; }
         .cmd-out { background:#111; color:#d4d4d4; border-radius:6px; padding:14px; min-height:420px; max-height:70vh; overflow:auto; white-space:pre-wrap; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; }
+
+        /* ibdiagnet builder */
+        .builder-grid { display:grid; grid-template-columns: 260px 1fr; gap:18px; align-items:start; }
+        .flag-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap:8px; }
+        .flag-chip { display:flex; align-items:center; gap:8px; background:#1a1a1a; border:1px solid #353535; border-radius:5px; padding:8px 10px; cursor:pointer; font-size:13px; }
+        .flag-chip:hover { border-color:#76b900; }
+        .flag-chip input { accent-color:#76b900; width:15px; height:15px; }
+        .flag-chip code { color:#9cdcfe; font-size:11px; }
+        .num-row { display:flex; gap:14px; flex-wrap:wrap; margin-top:12px; }
+        .num-row label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:#aaa; }
+        .num-row input { width:120px; padding:7px 9px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px; }
+        .cmd-preview { margin-top:14px; background:#111; border:1px solid #333; border-radius:5px; padding:12px; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; color:#9cdcfe; white-space:pre-wrap; word-break:break-all; }
+        .diag-status { margin-top:12px; font-size:13px; }
+        .out-list { display:flex; flex-wrap:wrap; gap:6px; }
+        .out-list .flag-chip { padding:6px 9px; font-size:12px; }
+        .data-table td.num, .data-table th.num { text-align:right; font-family:monospace; }
+        details.diag-det { margin-top:12px; }
+        details.diag-det summary { cursor:pointer; color:#76b900; font-size:13px; }
+        details.diag-det pre { background:#111; border-radius:5px; padding:12px; max-height:280px; overflow:auto; font-size:12px; color:#ddd; }
     </style>
 </head>
 <body>
     <div class="page-header">
         <div>
-            <div class="page-title">Manual IB Diagnostics</div>
-            <div class="last-updated">Run heavyweight diagnostics on demand. Nothing here runs in cron.</div>
+            <div class="page-title">IB Diagnostics</div>
+            <div class="last-updated">On-demand only &mdash; nothing here runs in cron unless you explicitly enable scheduling.</div>
         </div>
         <div class="action-buttons">
-            <button class="btn btn-secondary" onclick="downloadOutput()">Download Output</button>
-            <button class="btn btn-primary" onclick="runCustom()">Run Custom</button>
+            <button class="btn btn-secondary" onclick="loadLatest()">Refresh result</button>
         </div>
     </div>
 
+    <!-- ===================== Fabric Diagnostic (ibdiagnet) builder ===================== -->
+    <div class="diag-card">
+        <h3>Fabric Diagnostic (ibdiagnet)</h3>
+        <div class="sub">
+            Runs a full-fabric <code>ibdiagnet</code> on the selected target, parses the output into a compact
+            report, and <strong>discards the 2-3&nbsp;GB of raw files</strong> (retention keeps the latest archive
+            for download). This is the rich, fabric-wide health source &mdash; routing, PHY, rail validation,
+            per-lane PM, cable info, SM/PM state.
+        </div>
+
+        <div class="builder-grid">
+            <div>
+                <label style="font-size:12px;color:#aaa;display:block;margin-bottom:4px;">Target</label>
+                <select id="diag-target" class="diag-panel" style="width:100%;padding:8px 10px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></select>
+                <div id="ufm-note" style="font-size:11px;color:#888;margin-top:4px;"></div>
+
+                <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary" style="padding:7px 12px;" onclick="applyGregoriPreset()">Full run preset</button>
+                    <button class="btn btn-secondary" style="padding:7px 12px;" onclick="clearFlags()">Clear</button>
+                </div>
+                <div style="font-size:11px;color:#888;margin-top:6px;">
+                    "Full run preset" ticks every option (Gregori's reference command).
+                </div>
+            </div>
+
+            <div>
+                <div class="flag-grid">
+                    <label class="flag-chip"><input type="checkbox" data-flag="routing"        onchange="updatePreview()"> Routing <code>--routing</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="ft"             onchange="updatePreview()"> Forwarding tables <code>--ft</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="get_phy_info"   onchange="updatePreview()"> PHY info <code>--get_phy_info</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="rail_validation" onchange="updatePreview()"> Rail validation <code>--rail_validation</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="sc"             onchange="updatePreview()"> Speed/credit <code>--sc</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="extended_speeds" onchange="updatePreview()"> Extended speeds <code>--extended_speeds all</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="pm_per_lane"    onchange="updatePreview()"> PM per-lane <code>--pm_per_lane</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="pm_all"         onchange="updatePreview()"> All PM counters <code>-P all=1</code></label>
+                    <label class="flag-chip"><input type="checkbox" data-flag="get_cable_info" onchange="updatePreview()"> Cable info <code>--get_cable_info</code></label>
+                </div>
+
+                <div style="margin-top:14px;font-size:12px;color:#aaa;margin-bottom:6px;">Output sections <code>--enable_output</code></div>
+                <div class="out-list" id="out-list"></div>
+
+                <div class="num-row">
+                    <label>MADs timeout (ms)<input type="number" id="n-mads_timeout" min="100" max="60000" value="2000" oninput="updatePreview()"></label>
+                    <label>MADs retries<input type="number" id="n-mads_retries" min="1" max="20" value="3" oninput="updatePreview()"></label>
+                    <label>PM pause time (ms)<input type="number" id="n-pm_pause_time" min="0" max="7200" value="1200" oninput="updatePreview()"></label>
+                </div>
+
+                <div class="cmd-preview" id="cmd-preview">ibdiagnet -o &lt;managed&gt;</div>
+
+                <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
+                    <button class="btn btn-primary" id="run-diag-btn" onclick="runFabricDiag()">Run Fabric Diagnostic</button>
+                    <span class="diag-status" id="diag-status"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== Latest result ===================== -->
+    <div class="diag-card" id="result-card">
+        <h3>Latest fabric diagnostic</h3>
+        <div id="result-body"><div class="no-data" style="padding:24px 0;"><h3>No fabric diagnostic yet</h3><p>Build a run above and click <em>Run Fabric Diagnostic</em>.</p></div></div>
+
+        <details class="diag-det" id="history-det" style="display:none;">
+            <summary>Run history</summary>
+            <div id="history-body"></div>
+        </details>
+    </div>
+
+    <!-- ===================== Manual single commands (presets) ===================== -->
     <div class="diag-grid">
         <div class="diag-panel">
-            <h3>Target switch</h3>
+            <h3>Manual single command</h3>
+            <label style="font-size:12px;color:#aaa;">Target switch</label>
             <select id="device"></select>
             <h3>Safe presets</h3>
             <button class="preset" onclick="runPreset('ib sminfo')">SM info (<code>ib sminfo</code>)</button>
@@ -50,16 +141,33 @@
         </div>
 
         <div class="diag-panel">
-            <h3>Command</h3>
-            <input id="cmd" placeholder="ib ibqueryerrors --details">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <h3 style="margin:0;">Command</h3>
+                <div class="action-buttons">
+                    <button class="btn btn-secondary" onclick="downloadOutput()">Download Output</button>
+                    <button class="btn btn-primary" onclick="runCustom()">Run Custom</button>
+                </div>
+            </div>
+            <input id="cmd" placeholder="ib ibqueryerrors --details" style="margin-top:10px;">
             <pre class="cmd-out" id="output">Select a switch and run a preset.</pre>
         </div>
     </div>
 
 <script>
+const OUTPUT_TOKENS = ['log','lst','sm','pm','iblinkinfo','fdbs','ar','far','slvl','rnc2','cables'];
 let lastOutput = '';
-document.addEventListener('DOMContentLoaded', loadDevices);
+let pollTimer = null;
 
+document.addEventListener('DOMContentLoaded', () => {
+    buildOutputChips();
+    loadDevices();
+    loadTargets();
+    loadLatest();
+    loadHistory();
+    updatePreview();
+});
+
+// ---------------- manual single command (presets) ----------------
 async function loadDevices() {
     const sel = document.getElementById('device');
     try {
@@ -119,6 +227,260 @@ function downloadOutput() {
     a.download = `lldpq-ib-diagnostic-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.txt`;
     a.click();
     URL.revokeObjectURL(a.href);
+}
+
+// ---------------- ibdiagnet builder ----------------
+function buildOutputChips() {
+    const wrap = document.getElementById('out-list');
+    wrap.innerHTML = OUTPUT_TOKENS.map(t =>
+        `<label class="flag-chip"><input type="checkbox" data-out="${t}" onchange="updatePreview()"> ${t}</label>`
+    ).join('');
+}
+
+async function loadTargets() {
+    const sel = document.getElementById('diag-target');
+    const note = document.getElementById('ufm-note');
+    try {
+        const r = await fetch('/diag-api.sh?action=targets', {cache:'no-store'});
+        const data = await r.json();
+        const targets = (data && data.targets) || [];
+        if (!targets.length) {
+            sel.innerHTML = '<option value="">No targets in devices.yaml</option>';
+        } else {
+            sel.innerHTML = targets.map(t => `<option value="${t.id}" data-kind="${t.kind}">${t.label}</option>`).join('');
+        }
+        note.textContent = data.ufm_configured
+            ? 'UFM appliance available as a target.'
+            : 'Tip: set UFM_SSH_HOST to run ibdiagnet on the UFM appliance.';
+    } catch (e) {
+        sel.innerHTML = '<option value="">Cannot load targets</option>';
+        note.textContent = 'Error: ' + e.message;
+    }
+}
+
+function collectFlags() {
+    const flags = {};
+    document.querySelectorAll('[data-flag]').forEach(cb => { flags[cb.getAttribute('data-flag')] = cb.checked; });
+    const outs = [];
+    document.querySelectorAll('[data-out]').forEach(cb => { if (cb.checked) outs.push(cb.getAttribute('data-out')); });
+    flags.enable_output = outs;
+    flags.mads_timeout  = numVal('n-mads_timeout');
+    flags.mads_retries  = numVal('n-mads_retries');
+    flags.pm_pause_time = numVal('n-pm_pause_time');
+    return flags;
+}
+
+function numVal(id) {
+    const v = document.getElementById(id).value;
+    return v === '' ? null : Number(v);
+}
+
+// Mirror the backend flag ordering so the preview matches exactly.
+function buildCommandString(flags) {
+    const parts = [];
+    const order = ['routing','ft','get_phy_info','rail_validation','sc','pm_per_lane','get_cable_info'];
+    const map = {
+        routing:'--routing', ft:'--ft', get_phy_info:'--get_phy_info',
+        rail_validation:'--rail_validation', sc:'--sc',
+        pm_per_lane:'--pm_per_lane', get_cable_info:'--get_cable_info',
+    };
+    order.forEach(k => { if (flags[k]) parts.push(map[k]); });
+    if (flags.extended_speeds) parts.push('--extended_speeds', 'all');
+    if (flags.pm_all)          parts.push('-P', 'all=1');
+    if (flags.mads_timeout  != null) parts.push('--mads_timeout', String(flags.mads_timeout));
+    if (flags.mads_retries  != null) parts.push('--mads_retries', String(flags.mads_retries));
+    if (flags.pm_pause_time != null) parts.push('--pm_pause_time', String(flags.pm_pause_time));
+    if (flags.enable_output && flags.enable_output.length) parts.push('--enable_output', flags.enable_output.join(','));
+    return parts.join(' ');
+}
+
+function currentBin() {
+    const opt = document.getElementById('diag-target').selectedOptions[0];
+    return (opt && opt.getAttribute('data-kind') === 'ufm') ? '/opt/ufm/opensm/bin/ibdiagnet' : 'ibdiagnet';
+}
+
+function updatePreview() {
+    const flags = collectFlags();
+    const cmd = buildCommandString(flags);
+    document.getElementById('cmd-preview').textContent = `${currentBin()} ${cmd} -o <managed>`.replace(/\s+/g, ' ');
+}
+
+function applyGregoriPreset() {
+    document.querySelectorAll('[data-flag]').forEach(cb => cb.checked = true);
+    document.querySelectorAll('[data-out]').forEach(cb => {
+        cb.checked = ['log','lst','sm','pm','iblinkinfo','fdbs','ar','far','slvl','rnc2'].includes(cb.getAttribute('data-out'));
+    });
+    document.getElementById('n-mads_timeout').value = 2000;
+    document.getElementById('n-mads_retries').value = 3;
+    document.getElementById('n-pm_pause_time').value = 1200;
+    updatePreview();
+}
+
+function clearFlags() {
+    document.querySelectorAll('[data-flag],[data-out]').forEach(cb => cb.checked = false);
+    updatePreview();
+}
+
+async function runFabricDiag() {
+    const target = document.getElementById('diag-target').value;
+    const status = document.getElementById('diag-status');
+    const btn = document.getElementById('run-diag-btn');
+    if (!target) {
+        await LLDPqUI.alert({title:'No target', message:'Select a target switch or the UFM appliance first.', type:'warning'});
+        return;
+    }
+    const flags = collectFlags();
+    const ok = await LLDPqUI.confirm({
+        title: 'Run full-fabric ibdiagnet?',
+        message: `This runs <code>ibdiagnet</code> on <strong>${target}</strong>, can take several minutes, `
+               + `and produces 2-3&nbsp;GB of raw output on the target (parsed here, then discarded). Continue?`,
+        confirmText: 'Run diagnostic',
+        danger: true,
+    });
+    if (!ok) return;
+
+    btn.disabled = true;
+    status.style.color = '#ffb74d';
+    status.textContent = 'Submitting...';
+    try {
+        const r = await fetch('/diag-api.sh?action=run', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ target, bin: currentBin(), flags }),
+        });
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'run rejected');
+        status.textContent = 'Started (run ' + data.run_id + ') ...';
+        pollStatus(data.run_id);
+    } catch (e) {
+        btn.disabled = false;
+        status.style.color = '#ef5350';
+        status.textContent = 'Error: ' + e.message;
+    }
+}
+
+function pollStatus(runId) {
+    const status = document.getElementById('diag-status');
+    const btn = document.getElementById('run-diag-btn');
+    if (pollTimer) clearInterval(pollTimer);
+    const RUNNING = ['queued','running','collecting','parsing'];
+    pollTimer = setInterval(async () => {
+        try {
+            const r = await fetch('/diag-api.sh?action=status&run=' + encodeURIComponent(runId), {cache:'no-store'});
+            const s = await r.json();
+            if (RUNNING.includes(s.state)) {
+                status.style.color = '#ffb74d';
+                status.textContent = `${s.state}: ${s.message || ''}`;
+            } else if (s.state === 'done') {
+                clearInterval(pollTimer); pollTimer = null;
+                status.style.color = '#81c784';
+                status.textContent = 'Done.';
+                btn.disabled = false;
+                loadRun(runId);
+                loadHistory();
+            } else if (s.state === 'error') {
+                clearInterval(pollTimer); pollTimer = null;
+                status.style.color = '#ef5350';
+                status.textContent = 'Failed: ' + (s.message || 'see run log');
+                btn.disabled = false;
+            } else {
+                status.textContent = s.state || 'unknown';
+            }
+        } catch (e) {
+            // keep polling a couple times; network blips happen
+        }
+    }, 3000);
+}
+
+// ---------------- result rendering ----------------
+async function loadLatest() {
+    try {
+        const r = await fetch('/diag-api.sh?action=last', {cache:'no-store'});
+        const data = await r.json();
+        renderSummary(data);
+    } catch (e) { /* leave the empty state */ }
+}
+
+async function loadRun(runId) {
+    try {
+        const r = await fetch('/monitor-results/ibdiag-runs/' + encodeURIComponent(runId) + '.json', {cache:'no-store'});
+        if (r.ok) { renderSummary(await r.json()); return; }
+    } catch (e) {}
+    loadLatest();
+}
+
+function renderSummary(d) {
+    const body = document.getElementById('result-body');
+    if (!d || d.parsed === false) {
+        body.innerHTML = `<div class="no-data" style="padding:24px 0;"><h3>No fabric diagnostic yet</h3><p>${esc((d && d.message) || 'Build a run above and click Run Fabric Diagnostic.')}</p></div>`;
+        return;
+    }
+    const t = d.totals || {};
+    const cables = d.cables || {};
+    let html = `
+        <div class="summary-grid" style="margin-bottom:14px;">
+            <div class="summary-card ${(t.errors|0) > 0 ? 'card-danger' : 'card-success'}"><div class="card-value">${fmt(t.errors)}</div><div class="card-label">Errors</div></div>
+            <div class="summary-card card-warning"><div class="card-value">${fmt(t.warnings)}</div><div class="card-label">Warnings</div></div>
+            <div class="summary-card card-info"><div class="card-value">${(d.stages||[]).length}</div><div class="card-label">Stages</div></div>
+            <div class="summary-card card-total"><div class="card-value">${fmt(cables.entries)}</div><div class="card-label">Cables</div></div>
+        </div>
+        <div style="font-size:12px;color:#aaa;margin-bottom:12px;">
+            <div><strong style="color:#ccc;">Target:</strong> ${esc(d.target||'-')} &nbsp;·&nbsp; <strong style="color:#ccc;">Finished:</strong> ${esc(d.finished_at||'-')} &nbsp;·&nbsp; <strong style="color:#ccc;">Run:</strong> ${esc(d.run_id||'-')}</div>
+            <div style="margin-top:4px;"><code style="color:#9cdcfe;">${esc(d.command||'')}</code></div>
+            ${d.raw_archive ? `<div style="margin-top:6px;"><a href="/monitor-results/ibdiag-runs/${esc(d.raw_archive)}" class="btn btn-secondary" style="padding:5px 12px;display:inline-flex;">Download raw archive (${humanSize(d.raw_size_bytes)})</a></div>` : '<div style="margin-top:6px;color:#777;">Raw output discarded (retention).</div>'}
+        </div>`;
+
+    if ((d.stages || []).length) {
+        html += `<table class="data-table" style="margin-bottom:8px;"><thead><tr><th>Stage</th><th class="num">Warnings</th><th class="num">Errors</th><th>Comment</th></tr></thead><tbody>`;
+        for (const s of d.stages) {
+            const cls = (s.errors|0) > 0 ? 'style="color:#ef5350;font-weight:600;"' : ((s.warnings|0) > 0 ? 'style="color:#ffb74d;"' : '');
+            html += `<tr ${cls}><td>${esc(s.name)}</td><td class="num">${fmt(s.warnings)}</td><td class="num">${fmt(s.errors)}</td><td style="color:#999;">${esc(s.comment||'')}</td></tr>`;
+        }
+        html += `</tbody></table>`;
+    }
+
+    if ((d.top_errors || []).length) {
+        html += `<details class="diag-det" open><summary>Errors (${d.top_errors.length})</summary><pre>${esc(d.top_errors.join('\n'))}</pre></details>`;
+    }
+    if ((d.top_warnings || []).length) {
+        html += `<details class="diag-det"><summary>Warnings (${d.top_warnings.length})</summary><pre>${esc(d.top_warnings.join('\n'))}</pre></details>`;
+    }
+    if ((d.files || []).length) {
+        const fl = d.files.map(f => `${f.name} (${humanSize(f.size_bytes)})`).join('\n');
+        html += `<details class="diag-det"><summary>Output files (${d.files.length})</summary><pre>${esc(fl)}</pre></details>`;
+    }
+    body.innerHTML = html;
+}
+
+async function loadHistory() {
+    try {
+        const r = await fetch('/diag-api.sh?action=runs', {cache:'no-store'});
+        const runs = await r.json();
+        const det = document.getElementById('history-det');
+        const body = document.getElementById('history-body');
+        if (!Array.isArray(runs) || !runs.length) { det.style.display = 'none'; return; }
+        det.style.display = '';
+        let html = `<table class="data-table"><thead><tr><th>Run</th><th>Target</th><th>Finished</th><th class="num">Errors</th><th class="num">Warnings</th></tr></thead><tbody>`;
+        for (const e of runs) {
+            html += `<tr style="cursor:pointer;" onclick="loadRun('${esc(e.run_id)}')">
+                <td class="mono">${esc(e.run_id)}</td><td>${esc(e.target||'-')}</td><td>${esc(e.finished_at||'-')}</td>
+                <td class="num">${fmt(e.errors)}</td><td class="num">${fmt(e.warnings)}</td></tr>`;
+        }
+        html += `</tbody></table>`;
+        body.innerHTML = html;
+    } catch (e) { /* no history */ }
+}
+
+// ---------------- helpers ----------------
+function fmt(n) { return (n === null || n === undefined) ? '-' : n; }
+function humanSize(b) {
+    b = Number(b) || 0;
+    if (b < 1024) return b + ' B';
+    const u = ['KB','MB','GB','TB']; let i = -1;
+    do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1);
+    return b.toFixed(1) + ' ' + u[i];
+}
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 </script>
 </body>

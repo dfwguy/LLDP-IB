@@ -41,6 +41,24 @@ if [ -n "${UFM_VERIFY_TLS:-}" ]; then
     sed -i "s|^UFM_VERIFY_TLS=.*|UFM_VERIFY_TLS=$UFM_VERIFY_TLS|" /etc/lldpq.conf
 fi
 
+# ─── Fabric Diagnostic (ibdiagnet) config (optional) ───
+# Persist to /etc/lldpq.conf so the CGI (diag-api.sh) and runner can `source` it.
+# UFM_SSH_HOST/UFM_SSH_USER let the Diagnostics page run ibdiagnet on the UFM
+# appliance; IBDIAGNET_* tune the scheduled run + parse-then-discard retention.
+for kv in "UFM_SSH_HOST=${UFM_SSH_HOST:-}" "UFM_SSH_USER=${UFM_SSH_USER:-root}" \
+          "IBDIAGNET_TARGET=${IBDIAGNET_TARGET:-}" "IBDIAGNET_USER=${IBDIAGNET_USER:-admin}" \
+          "IBDIAGNET_BIN=${IBDIAGNET_BIN:-ibdiagnet}" \
+          "IBDIAGNET_KEEP_RAW=${IBDIAGNET_KEEP_RAW:-1}" "IBDIAGNET_KEEP_RUNS=${IBDIAGNET_KEEP_RUNS:-20}" \
+          "IBDIAGNET_FLAGS=${IBDIAGNET_FLAGS:-}"; do
+    key="${kv%%=*}"; val="${kv#*=}"
+    if grep -q "^${key}=" /etc/lldpq.conf 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" /etc/lldpq.conf
+    else
+        echo "${kv}" >> /etc/lldpq.conf
+    fi
+done
+[ -n "${UFM_SSH_HOST:-}" ] && echo "  ✓ UFM SSH host for ibdiagnet: ${UFM_SSH_HOST}"
+
 # ─── Shared config permissions ───
 usermod -aG lldpq www-data 2>/dev/null || true
 usermod -aG www-data lldpq 2>/dev/null || true
@@ -203,6 +221,33 @@ else
 0 */12 * * * lldpq /usr/local/bin/get-conf > /dev/null 2>&1
 CRON
     chmod 644 /etc/cron.d/lldpq
+fi
+
+# ─── Optional scheduled Fabric Diagnostic (ibdiagnet) ───
+# OFF by default. The 2-3 GB ibdiagnet run is heavy, so we only schedule it when
+# the admin explicitly opts in with IBDIAGNET_SCHEDULE *and* IBDIAGNET_TARGET.
+# The runner parses then discards the raw output (retention = IBDIAGNET_KEEP_RAW),
+# so the data volume stays bounded. Never enabled in demo mode.
+#   IBDIAGNET_SCHEDULE: a cron expression ("0 */2 * * *") or a bare integer N
+#                       (interpreted as "every N hours").
+rm -f /etc/cron.d/lldpq-ibdiagnet
+if [ "${LLDPQ_DEMO:-false}" != "true" ] && [ -n "${IBDIAGNET_SCHEDULE:-}" ]; then
+    if [ -z "${IBDIAGNET_TARGET:-}" ]; then
+        echo "  ⚠ IBDIAGNET_SCHEDULE set but IBDIAGNET_TARGET empty — scheduled diagnostic NOT enabled"
+    else
+        SCHED="$IBDIAGNET_SCHEDULE"
+        case "$SCHED" in
+            ''|*[!0-9]*) : ;;                 # contains non-digits -> treat as a cron expression
+            *) SCHED="0 */${SCHED} * * *" ;;  # bare integer -> every N hours
+        esac
+        DEFAULT_FLAGS="${IBDIAGNET_FLAGS:---get_phy_info --get_cable_info --extended_speeds all --sc}"
+        {
+            echo "# LLDPq-IB scheduled fabric diagnostic (opt-in via IBDIAGNET_SCHEDULE)"
+            echo "${SCHED} lldpq IBDIAG_TARGET='${IBDIAGNET_TARGET}' IBDIAG_USER='${IBDIAGNET_USER:-admin}' IBDIAG_BIN='${IBDIAGNET_BIN:-ibdiagnet}' IBDIAG_FLAGS='${DEFAULT_FLAGS}' /home/lldpq/lldpq/run-ibdiagnet.sh > /dev/null 2>&1"
+        } > /etc/cron.d/lldpq-ibdiagnet
+        chmod 644 /etc/cron.d/lldpq-ibdiagnet
+        echo "  ✓ Scheduled fabric diagnostic: '${SCHED}' on ${IBDIAGNET_TARGET} (parse-then-discard, keep_raw=${IBDIAGNET_KEEP_RAW:-1})"
+    fi
 fi
 
 # ─── DHCP Server Setup ───

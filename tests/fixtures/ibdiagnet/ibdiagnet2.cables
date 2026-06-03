@@ -1,0 +1,6 @@
+# ibdiagnet2.cables (fixture excerpt)
+Port=ib-spine-01/IB1/1 PN=MMS4X00-NS Vendor=Mellanox SN=MT2310X00001 FW=46.120.300 Length=2m
+Port=ib-spine-01/IB1/2 PN=MMS4X00-NS Vendor=Mellanox SN=MT2310X00002 FW=46.120.300 Length=2m
+Port=ib-leaf-03/IB1/7  PN=MMS4X00-NS Vendor=Mellanox SN=MT2310X00045 FW=46.120.290 Length=3m
+Port=ib-leaf-03/IB1/8  PN=MMS4X00-NS Vendor=Mellanox SN=MT2310X00046 FW=46.120.300 Length=3m
+Port=ib-leaf-06/IB1/3  PN=MCP1650-H Vendor=Mellanox SN=MT2310X00120 FW=0.0.0     Length=1m

@@ -15,6 +15,9 @@ scope.
 - MLNX-OS native commands are sent to the switch CLI as `show ...`.
 - ibutils are run through the MLNX-OS CLI `ib ...` prefix.
 - Heavy commands such as `ib ibroute` are **manual only**, never cron.
+- `ibdiagnet` is **on-demand by default**; it can be opt-in scheduled
+  (`IBDIAGNET_SCHEDULE`) but always parses-then-discards its 2-3 GB output with a
+  retention cap (see [Fabric Diagnostic](#fabric-diagnostic-ibdiagnet)).
 - SSH commands shown below run as the username from `devices.yaml` (normally
   `admin`).
 
@@ -580,6 +583,81 @@ Notes:
 - `ib ibroute` can generate large output.
 - Use it only for manual TAC/debug workflows.
 
+## Fabric Diagnostic (ibdiagnet)
+
+Sources:
+
+- `html/diagnostics.html` (the builder + result view)
+- `html/diag-api.sh` (run/status/last/runs/targets API; admin only)
+- `lldpq/run-ibdiagnet.sh` (SSH + run + collect + discard + retention)
+- `lldpq/process_ibdiagnet.py` (parse output -> compact JSON)
+
+This is the rich, fabric-wide health source. It is **on-demand by default**; it is
+only scheduled when the admin explicitly sets `IBDIAGNET_SCHEDULE` (see below).
+
+The command sent to the target (built from the UI checkboxes; the reference
+"Full run preset" reproduces the command shared by the IB SA team):
+
+```text
+ibdiagnet --routing --ft --get_phy_info --rail_validation --sc \
+  --extended_speeds all --pm_per_lane -P all=1 --get_cable_info \
+  --mads_timeout 2000 --mads_retries 3 \
+  --enable_output log,lst,sm,pm,iblinkinfo,fdbs,ar,far,slvl,rnc2 \
+  -o <managed-temp-dir>
+```
+
+On the UFM appliance the binary path is `/opt/ufm/opensm/bin/ibdiagnet`.
+
+Important about the output path and cleanup:
+
+- `-o` is **always managed by LLDPq-IB** (a per-run temp dir on the target). A
+  caller-supplied `-o` is rejected. Flags are built from a fixed whitelist; raw
+  flag strings are never passed through.
+- ibdiagnet produces 2-3 GB of raw files. LLDPq-IB pulls back only the small
+  files needed to parse (excludes `ibdiagnet2.db_csv`, `ibdiagnet2.pm`, `*.fdbs`,
+  `*.net_dump`), extracts the signal into `monitor-results/ib_fabric_diag.json`,
+  and then **deletes the raw output on the target**:
+
+```text
+# remote (run, collect-small, optional full archive, then delete):
+mkdir -p <managed-temp-dir> && ibdiagnet <flags> -o <managed-temp-dir>
+tar czf - -C <managed-temp-dir> --exclude=ibdiagnet2.db_csv --exclude=ibdiagnet2.pm --exclude='*.fdbs' --exclude='*.net_dump' .
+tar czf - -C <managed-temp-dir> .            # only when IBDIAGNET_KEEP_RAW > 0
+rm -rf <managed-temp-dir>
+```
+
+- Retention keeps the newest `IBDIAGNET_KEEP_RAW` archives (default 1) and the
+  newest `IBDIAGNET_KEEP_RUNS` parsed summaries (default 20); older ones are
+  pruned automatically so the data volume never grows unbounded.
+
+Output files written under `monitor-results/`:
+
+```text
+ib_fabric_diag.json                 # latest parsed summary (UI default view)
+ibdiag-runs/index.json              # run history
+ibdiag-runs/<run_id>.json           # per-run summary
+ibdiag-runs/<run_id>.status         # poll target while running
+ibdiag-runs/<run_id>.tar.gz         # retained raw archive (if kept)
+```
+
+Optional scheduled run (OFF by default), configured via container env and
+persisted to `/etc/lldpq.conf`:
+
+```text
+IBDIAGNET_SCHEDULE   # cron expression ("0 */2 * * *") or bare integer N (every N hours)
+IBDIAGNET_TARGET     # device hostname or UFM SSH host; required to enable scheduling
+IBDIAGNET_USER       # SSH user (default admin; UFM appliance often root)
+IBDIAGNET_BIN        # ibdiagnet | /opt/ufm/opensm/bin/ibdiagnet
+IBDIAGNET_FLAGS      # override the default scheduled flag set
+IBDIAGNET_KEEP_RAW   # retained raw archives (default 1; 0 = leanest, no big transfer)
+IBDIAGNET_KEEP_RUNS  # retained parsed summaries (default 20)
+UFM_SSH_HOST         # SSH host of the UFM appliance (enables the "ufm" target)
+UFM_SSH_USER         # SSH user for the UFM appliance (default root)
+```
+
+Mock mode (`LLDPQ_IB_MOCK=1`) parses `tests/fixtures/ibdiagnet/` instead of SSH,
+so the demo and offline tests show a populated report with no real fabric.
+
 ## Setup / First Collection
 
 Source: `html/setup-api.sh`
@@ -784,6 +862,8 @@ LLDPq-IB currently does not automate MLNX-OS upgrades.
 | `html/mlnxos-ztp.sh` | local switch during ZTP | hostname/password/key/config bootstrap |
 | `html/ib-api.sh` | IB switches | safe command runner, live `ibtracert` |
 | `html/diagnostics.html` | IB switches through `ib-api.sh` | manual diagnostics |
+| `html/diag-api.sh` | launches `run-ibdiagnet.sh` | fabric diagnostic run/status/history API |
+| `lldpq/run-ibdiagnet.sh` | UFM appliance or IB switch | full-fabric `ibdiagnet` (parse-then-discard) |
 | `html/ufm-api.sh` | UFM REST API | UFM version, alerts, systems, links, BER history |
 | `html/setup-api.sh` | local trigger files | first collection queue |
 

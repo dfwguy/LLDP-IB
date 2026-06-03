@@ -105,6 +105,9 @@ RUN mkdir -p /opt/lldpq-demo/monitor-results/snapshots \
     && python3 /home/lldpq/lldpq/generate_hardware_html.py \
     && python3 /home/lldpq/lldpq/process_log_data.py \
     && python3 /home/lldpq/lldpq/process_fabric_health.py \
+    && IBDIAG_TARGET=ufm IBDIAG_RUN_ID=demo \
+       IBDIAG_COMMAND='ibdiagnet --routing --ft --get_phy_info --rail_validation --sc --extended_speeds all --pm_per_lane -P all=1 --get_cable_info --enable_output log,lst,sm,pm,iblinkinfo,fdbs,ar,far,slvl,rnc2 -o <managed>' \
+       python3 /home/lldpq/lldpq/process_ibdiagnet.py /home/lldpq/tests/fixtures/ibdiagnet /opt/lldpq-demo/monitor-results/ib_fabric_diag.json \
     && python3 -c "import json, os, datetime; \
         mr='/opt/lldpq-demo/monitor-results'; \
         load=lambda n: (json.load(open(os.path.join(mr,n))) if os.path.exists(os.path.join(mr,n)) else None); \
@@ -178,6 +181,14 @@ RUN printf '%s\n' \
     'UFM_URL=' \
     'UFM_TOKEN=' \
     'UFM_VERIFY_TLS=false' \
+    'UFM_SSH_HOST=' \
+    'UFM_SSH_USER=root' \
+    'IBDIAGNET_TARGET=' \
+    'IBDIAGNET_USER=admin' \
+    'IBDIAGNET_BIN=ibdiagnet' \
+    'IBDIAGNET_KEEP_RAW=1' \
+    'IBDIAGNET_KEEP_RUNS=20' \
+    'IBDIAGNET_FLAGS=' \
     > /etc/lldpq.conf
 
 # Create auth users file + sessions directory

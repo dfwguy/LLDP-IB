@@ -1,0 +1,22 @@
+-I- Using port 1 as the local port
+-I- Discovering the subnet ... 28 nodes (12 Switches & 16 CA-s) discovered
+-I-
+-I- Stage                            Warnings   Errors     Comment
+-I- Bad GUIDs/LIDs Check             0          0
+-I- Link State Active Check          0          0
+-I- General Devices Info Report      0          0
+-I- Performance Counters Report      2          0          See ibdiagnet2.pm
+-I- Partitions Check                 0          0
+-I- IPoIB Subnets Check              1          0
+-I- Temperature Sensing             0          0
+-I- Speed / Width Checks             3          1          See log for details
+-I- Routing Check                    0          0
+-I- Summary                          6          1
+-I-
+-W- Suboptimal rate on port "ib-leaf-03"/IB1/7 (expected 400, actual 200)
+-W- Suboptimal rate on port "ib-leaf-03"/IB1/8 (expected 400, actual 200)
+-W- IPoIB subnet 0x0002c90300000001 has a node without IPoIB capability
+-W- PM counter symbol_error_counter increasing on "ib-spine-02"/IB1/12
+-W- PM counter port_rcv_errors non-zero on "ib-leaf-06"/IB1/3
+-E- Link with logical state INIT found on "ib-leaf-03"/IB1/7 - check cabling
+-I- Done. See /tmp/run_remote_ufm_ibdiag_runs for full output.

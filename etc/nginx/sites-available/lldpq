@@ -189,6 +189,20 @@ server {
             fastcgi_param CONTENT_LENGTH $content_length;
             fastcgi_param HTTP_COOKIE $http_cookie;
         }
+
+        # Fabric Diagnostic (ibdiagnet) runner API. The run action launches the
+        # heavy job detached and returns immediately; the UI polls ?action=status.
+        location = /diag-api.sh {
+            fastcgi_pass unix:/var/run/fcgiwrap.socket;
+            fastcgi_param SCRIPT_FILENAME /var/www/html/diag-api.sh;
+            fastcgi_param QUERY_STRING $query_string;
+            fastcgi_param REQUEST_METHOD $request_method;
+            fastcgi_param CONTENT_TYPE $content_type;
+            fastcgi_param CONTENT_LENGTH $content_length;
+            fastcgi_param HTTP_COOKIE $http_cookie;
+
+            fastcgi_read_timeout 30;
+        }
         
         # AI Assistant API endpoint (LLM proxy + fabric context)
         # NOTE: ai.html / ai-api.sh still carry the LLDPq (Ethernet) BGP/EVPN

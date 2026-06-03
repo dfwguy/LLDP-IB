@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# diag-api.sh - Fabric Diagnostic (ibdiagnet) runner API.
+#
+# Drives the on-demand "Fabric Diagnostic" builder on diagnostics.html and serves
+# the parsed results. The heavy lifting (run -> parse -> discard -> retain) is done
+# by lldpq/run-ibdiagnet.sh, which this endpoint launches detached in the
+# background so the request returns immediately and the UI polls for status.
+#
+# Actions:
+#   GET  ?action=last            -> latest parsed summary (ib_fabric_diag.json)
+#   GET  ?action=runs            -> run index (history)
+#   GET  ?action=status&run=ID   -> status of a specific run (poll target)
+#   GET  ?action=targets         -> selectable targets (devices + configured UFM host)
+#   POST ?action=run             -> start a run; body = {target, bin, flags:{...}}
+#
+# Admin only. Flags are built from a fixed whitelist (never raw passthrough), and
+# the target must resolve to a known device or the configured UFM SSH host.
+#
+# Copyright (c) 2024-2026 LLDPq Project - Licensed under MIT License
+
+source /var/www/html/auth-guard.sh 2>/dev/null || true
+require_admin
+
+echo "Content-Type: application/json"
+echo ""
+
+source /etc/lldpq.conf 2>/dev/null || true
+export LLDPQ_DIR="${LLDPQ_DIR:-/home/lldpq/lldpq}"
+export WEB_ROOT="${WEB_ROOT:-/var/www/html}"
+RUNS_DIR="$WEB_ROOT/monitor-results/ibdiag-runs"
+
+ACTION="${QUERY_STRING#*action=}"
+ACTION="${ACTION%%&*}"
+
+case "$ACTION" in
+    last)
+        cat "$WEB_ROOT/monitor-results/ib_fabric_diag.json" 2>/dev/null \
+            || echo '{"parsed": false, "message": "No fabric diagnostic has been run yet."}'
+        ;;
+
+    runs)
+        cat "$RUNS_DIR/index.json" 2>/dev/null || echo '[]'
+        ;;
+
+    status)
+        RUN="${QUERY_STRING#*run=}"
+        RUN="${RUN%%&*}"
+        RUN=$(printf '%s' "$RUN" | tr -cd 'A-Za-z0-9TZ_-')
+        cat "$RUNS_DIR/${RUN}.status" 2>/dev/null \
+            || echo '{"state": "unknown", "message": "No such run."}'
+        ;;
+
+    targets)
+        python3 <<'PY'
+import json, os
+lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+targets = []
+# Devices from devices.yaml
+try:
+    import yaml
+    data = yaml.safe_load(open(lldpq_dir + '/devices.yaml')) or {}
+    defaults = data.get('defaults', {})
+    duser = defaults.get('username', 'admin')
+    for ip, val in (data.get('devices', {}) or {}).items():
+        host = ''
+        user = duser
+        if isinstance(val, str):
+            parts = val.strip().split()
+            host = parts[0] if parts else ''
+        elif isinstance(val, dict):
+            host = val.get('hostname', '')
+            user = val.get('username', duser)
+        if host:
+            targets.append({'id': host, 'label': f'{host} ({ip})', 'kind': 'switch', 'user': user})
+except Exception:
+    pass
+# Configured UFM appliance (SSH), if any
+ufm_host = os.environ.get('UFM_SSH_HOST', '')
+if ufm_host:
+    targets.append({
+        'id': 'ufm',
+        'label': f'UFM appliance ({ufm_host})',
+        'kind': 'ufm',
+        'user': os.environ.get('UFM_SSH_USER', 'root'),
+    })
+print(json.dumps({'success': True, 'targets': targets, 'ufm_configured': bool(ufm_host)}))
+PY
+        ;;
+
+    run)
+        if [ "${REQUEST_METHOD:-GET}" != "POST" ]; then
+            echo '{"success": false, "error": "run requires POST"}'
+            exit 0
+        fi
+        read -r POST_DATA
+        export POST_DATA
+        python3 <<'PY'
+import json, os, re, subprocess
+from datetime import datetime, timezone
+
+lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+web_root  = os.environ.get('WEB_ROOT', '/var/www/html')
+runs_dir  = os.path.join(web_root, 'monitor-results', 'ibdiag-runs')
+
+try:
+    body = json.loads(os.environ.get('POST_DATA') or '{}')
+except Exception:
+    body = {}
+
+target_id = str(body.get('target', '')).strip()
+if not target_id:
+    print(json.dumps({'success': False, 'error': 'No target selected'}))
+    raise SystemExit
+
+# ---- Resolve target against devices.yaml / configured UFM host ----
+resolved_host = None
+ssh_user = 'admin'
+ufm_host = os.environ.get('UFM_SSH_HOST', '')
+ufm_user = os.environ.get('UFM_SSH_USER', 'root')
+
+if target_id == 'ufm':
+    if not ufm_host:
+        print(json.dumps({'success': False,
+            'error': 'UFM SSH host not configured. Set UFM_SSH_HOST (and UFM_SSH_USER) to run ibdiagnet on the UFM appliance.'}))
+        raise SystemExit
+    resolved_host, ssh_user = ufm_host, ufm_user
+else:
+    try:
+        import yaml
+        data = yaml.safe_load(open(lldpq_dir + '/devices.yaml')) or {}
+        defaults = data.get('defaults', {})
+        duser = defaults.get('username', 'admin')
+        for ip, val in (data.get('devices', {}) or {}).items():
+            host = ''
+            user = duser
+            if isinstance(val, str):
+                parts = val.strip().split()
+                host = parts[0] if parts else ''
+            elif isinstance(val, dict):
+                host = val.get('hostname', '')
+                user = val.get('username', duser)
+            if host == target_id:
+                resolved_host, ssh_user = ip, user
+                break
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': f'Cannot read devices.yaml: {e}'}))
+        raise SystemExit
+
+if not resolved_host:
+    print(json.dumps({'success': False, 'error': f'Unknown target: {target_id}'}))
+    raise SystemExit
+
+# ---- Binary (limited choices) ----
+bin_choice = str(body.get('bin', '')).strip()
+ALLOWED_BINS = {'ibdiagnet', '/opt/ufm/opensm/bin/ibdiagnet'}
+if bin_choice not in ALLOWED_BINS:
+    bin_choice = '/opt/ufm/opensm/bin/ibdiagnet' if target_id == 'ufm' else 'ibdiagnet'
+
+# ---- Build flags from a fixed whitelist (no raw passthrough) ----
+flags = []
+BOOL_FLAGS = {
+    'routing': '--routing',
+    'ft': '--ft',
+    'get_phy_info': '--get_phy_info',
+    'rail_validation': '--rail_validation',
+    'sc': '--sc',
+    'pm_per_lane': '--pm_per_lane',
+    'get_cable_info': '--get_cable_info',
+}
+fl = body.get('flags', {}) or {}
+for key, flag in BOOL_FLAGS.items():
+    if fl.get(key):
+        flags.append(flag)
+if fl.get('extended_speeds'):
+    flags += ['--extended_speeds', 'all']
+if fl.get('pm_all'):
+    flags += ['-P', 'all=1']
+
+def clamp_int(val, lo, hi, default):
+    try:
+        v = int(val)
+    except Exception:
+        return default
+    return max(lo, min(hi, v))
+
+if fl.get('mads_timeout') is not None:
+    flags += ['--mads_timeout', str(clamp_int(fl.get('mads_timeout'), 100, 60000, 2000))]
+if fl.get('mads_retries') is not None:
+    flags += ['--mads_retries', str(clamp_int(fl.get('mads_retries'), 1, 20, 3))]
+if fl.get('pm_pause_time') is not None:
+    flags += ['--pm_pause_time', str(clamp_int(fl.get('pm_pause_time'), 0, 7200, 1200))]
+
+KNOWN_OUTPUTS = ['log', 'lst', 'sm', 'pm', 'iblinkinfo', 'fdbs', 'ar', 'far', 'slvl', 'rnc2', 'cables']
+outs = [o for o in (fl.get('enable_output') or []) if o in KNOWN_OUTPUTS]
+if outs:
+    flags += ['--enable_output', ','.join(outs)]
+
+flag_str = ' '.join(flags)
+# Final safety net: only the safe ibdiagnet flag charset, and never -o.
+if flag_str and re.search(r'[^A-Za-z0-9 _,=./-]', flag_str):
+    print(json.dumps({'success': False, 'error': 'Internal: unsafe flag string built'}))
+    raise SystemExit
+if ' -o ' in f' {flag_str} ':
+    print(json.dumps({'success': False, 'error': 'Output path is managed; -o not allowed'}))
+    raise SystemExit
+
+# ---- Generate run id + initial status, then launch the runner detached ----
+run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+os.makedirs(runs_dir, exist_ok=True)
+now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+try:
+    with open(os.path.join(runs_dir, f'{run_id}.status'), 'w') as f:
+        json.dump({'run_id': run_id, 'state': 'queued',
+                   'message': f'Queued ibdiagnet on {target_id}',
+                   'target': target_id, 'started_at': now, 'updated_at': now}, f)
+except Exception as e:
+    print(json.dumps({'success': False, 'error': f'Cannot create status file: {e}'}))
+    raise SystemExit
+
+env = dict(os.environ)
+env['IBDIAG_TARGET'] = resolved_host
+env['IBDIAG_USER']   = ssh_user
+env['IBDIAG_BIN']    = bin_choice
+env['IBDIAG_FLAGS']  = flag_str
+env['IBDIAG_RUN_ID'] = run_id
+
+runner = os.path.join(lldpq_dir, 'run-ibdiagnet.sh')
+try:
+    devnull = open(os.devnull, 'w')
+    subprocess.Popen(['bash', runner], env=env,
+                     stdout=devnull, stderr=subprocess.STDOUT,
+                     start_new_session=True)
+except Exception as e:
+    print(json.dumps({'success': False, 'error': f'Failed to launch runner: {e}'}))
+    raise SystemExit
+
+print(json.dumps({
+    'success': True,
+    'run_id': run_id,
+    'target': target_id,
+    'command': f'{bin_choice} {flag_str} -o <managed>',
+}))
+PY
+        ;;
+
+    *)
+        echo "{\"success\": false, \"error\": \"Unknown action: ${ACTION}\"}"
+        ;;
+esac

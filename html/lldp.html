@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
+    <script src="css/lldpq-ib.js"></script>
     <style>
         .conn-row.match    td.status { color: #4caf50; font-weight: 600; }
         .conn-row.fail     td.status { color: #f44336; font-weight: 600; }
@@ -22,6 +23,11 @@
         .pill-nowire  { background: rgba(120,120,120,0.20); color: #aaa;   }
         .pill-up      { background: rgba(76,175,80,0.15);  color: #81c784; }
         .pill-down    { background: rgba(244,67,54,0.15);  color: #ef5350; }
+        .conn-row { cursor: pointer; }
+        .conn-row.selected { background: rgba(118,185,0,0.12) !important; }
+        .conn-row.selected td:first-child { box-shadow: inset 3px 0 0 #76b900; }
+        .sel-checkbox { cursor: pointer; width: 15px; height: 15px; accent-color: #76b900; vertical-align: middle; }
+        .sel-count { color: #76b900; font-weight: 600; font-size: 12px; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -31,8 +37,33 @@
             <div class="last-updated" id="last-updated"></div>
         </div>
         <div class="action-buttons">
+            <button class="btn btn-secondary admin-only" onclick="openTopologyEditor()" title="Edit topology.dot expected wiring (admin only)">Edit topology.dot</button>
             <button class="btn btn-secondary" onclick="loadData()">Refresh</button>
-            <button class="btn btn-primary"   onclick="downloadCSV()">Download CSV</button>
+            <button class="btn btn-primary"   onclick="downloadCSV()" id="dl-csv-btn">Download CSV</button>
+        </div>
+    </div>
+
+    <!-- topology.dot editor modal -->
+    <div id="topo-dot-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;display:none;align-items:center;justify-content:center;" onclick="if(event.target===this)closeTopologyEditor()">
+        <div style="background:#1e1e1e;border:1px solid #404040;border-radius:8px;width:80vw;max-width:1100px;height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 50px rgba(0,0,0,0.6);">
+            <div style="padding:14px 20px;background:#252526;border-bottom:1px solid #3c3c3c;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <span style="color:#76b900;font-weight:600;font-size:14px;">Edit topology.dot</span>
+                    <span style="color:#888;font-size:12px;font-family:monospace;margin-left:12px;">expected wiring &mdash; "DevA":"IB1/1" -- "DevB":"IB1/1"</span>
+                </div>
+                <button onclick="closeTopologyEditor()" style="background:none;border:0;color:#aaa;font-size:22px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;padding:12px 20px;gap:8px;min-height:0;">
+                <textarea id="topo-dot-textarea" spellcheck="false" placeholder="Loading..."
+                    style="flex:1;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;padding:12px;font-family:'Cascadia Code',Consolas,'Courier New',monospace;font-size:13px;line-height:1.5;resize:none;tab-size:2;"></textarea>
+            </div>
+            <div style="padding:12px 20px;background:#252526;border-top:1px solid #3c3c3c;border-radius:0 0 8px 8px;display:flex;align-items:center;justify-content:space-between;">
+                <div id="topo-dot-status" style="color:#888;font-size:12px;"></div>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="closeTopologyEditor()" style="padding:7px 18px;border:0;border-radius:4px;cursor:pointer;font-size:13px;background:#404040;color:#fff;">Cancel</button>
+                    <button id="topo-dot-save" onclick="saveTopologyEditor()" style="padding:7px 18px;border:0;border-radius:4px;cursor:pointer;font-size:13px;background:#76b900;color:#000;font-weight:600;">Save</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -80,12 +111,21 @@
             <label>Search</label>
             <input type="text" id="filter-search" placeholder="Device / port / neighbor..." oninput="renderTable()" autocomplete="off">
         </div>
+        <div class="filter-group">
+            <label>Selection</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button class="btn btn-secondary" style="padding:6px 12px;" onclick="selectProblems()" title="Select all miswired / missing / unexpected rows in the current filter">Select problems</button>
+                <button class="btn btn-secondary" style="padding:6px 12px;" onclick="clearSelection()">Clear</button>
+                <span class="sel-count" id="sel-count">0 selected</span>
+            </div>
+        </div>
     </div>
 
     <div class="table-container">
         <table class="data-table">
             <thead>
                 <tr>
+                    <th style="width:34px; text-align:center;"><input type="checkbox" class="sel-checkbox" id="sel-all" onclick="toggleSelectAll(this)" title="Select / clear all rows in the current filter"></th>
                     <th class="sortable" onclick="sortBy('local')">Local Device <span class="sort-arrow" id="arr-local">▲</span></th>
                     <th class="sortable" onclick="sortBy('localPort')">Local Port <span class="sort-arrow" id="arr-localPort"></span></th>
                     <th>Port State</th>
@@ -98,7 +138,7 @@
                 </tr>
             </thead>
             <tbody id="conn-table">
-                <tr><td colspan="9"><div class="loading"><div class="spinner"></div>Loading wiring data...</div></td></tr>
+                <tr><td colspan="10"><div class="loading"><div class="spinner"></div>Loading wiring data...</div></td></tr>
             </tbody>
         </table>
     </div>
@@ -109,8 +149,116 @@ let dotEdges = [];          // expected edges parsed from topology.dot
 let allRows  = [];          // merged per-port wiring rows
 let sortField = 'local';
 let sortAsc = true;
+let selectedKeys = new Set();   // persistent row selection (keyed by device|port)
 
-document.addEventListener('DOMContentLoaded', loadData);
+document.addEventListener('DOMContentLoaded', () => {
+    loadData();
+    const tb = document.getElementById('conn-table');
+    if (tb) tb.addEventListener('click', onTbodyClick);
+});
+
+// ---------- topology.dot editor modal ----------
+async function openTopologyEditor() {
+    document.getElementById('topo-dot-overlay').style.display = 'flex';
+    const ta = document.getElementById('topo-dot-textarea');
+    const status = document.getElementById('topo-dot-status');
+    const saveBtn = document.getElementById('topo-dot-save');
+    ta.value = 'Loading...'; ta.disabled = true; saveBtn.disabled = true;
+    status.style.color = '#888'; status.textContent = '';
+    try {
+        const r = await fetch('/edit-topology', { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status} -- are you logged in as admin?`);
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Server refused the request');
+        ta.value = data.content || ''; ta.disabled = false; saveBtn.disabled = false;
+        status.textContent = `Loaded ${ta.value.length} bytes`;
+    } catch (e) {
+        ta.value = ''; ta.disabled = true; status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+    }
+}
+
+function closeTopologyEditor() {
+    document.getElementById('topo-dot-overlay').style.display = 'none';
+}
+
+async function saveTopologyEditor() {
+    const ta = document.getElementById('topo-dot-textarea');
+    const status = document.getElementById('topo-dot-status');
+    const saveBtn = document.getElementById('topo-dot-save');
+    saveBtn.disabled = true; status.style.color = '#888'; status.textContent = 'Saving...';
+    try {
+        const r = await fetch('/edit-topology', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: ta.value }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.success === false) throw new Error(data.error || `HTTP ${r.status}`);
+        status.style.color = '#4caf50';
+        status.textContent = `Saved at ${new Date().toLocaleTimeString('sv-SE')} -- reloading...`;
+        setTimeout(() => { closeTopologyEditor(); loadData(); }, 600);
+    } catch (e) {
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+        saveBtn.disabled = false;
+    }
+}
+
+// ---------- row selection ----------
+function rowKey(r) { return r.local + '|' + r.localPort; }
+
+function onTbodyClick(e) {
+    const tr = e.target.closest('tr.conn-row');
+    if (!tr) return;
+    const key = tr.getAttribute('data-key');
+    if (!key) return;
+    if (e.target.classList.contains('sel-checkbox')) {
+        if (e.target.checked) selectedKeys.add(key); else selectedKeys.delete(key);
+    } else {
+        if (selectedKeys.has(key)) selectedKeys.delete(key); else selectedKeys.add(key);
+    }
+    syncSelectionUI();
+}
+
+function syncSelectionUI() {
+    document.querySelectorAll('#conn-table tr.conn-row').forEach(tr => {
+        const on = selectedKeys.has(tr.getAttribute('data-key'));
+        tr.classList.toggle('selected', on);
+        const cb = tr.querySelector('.sel-checkbox');
+        if (cb) cb.checked = on;
+    });
+    updateSelCount();
+}
+
+function updateSelCount() {
+    const el = document.getElementById('sel-count');
+    if (el) el.textContent = selectedKeys.size + ' selected';
+    const filteredKeys = getFiltered().map(rowKey);
+    const allSel  = filteredKeys.length > 0 && filteredKeys.every(k => selectedKeys.has(k));
+    const someSel = filteredKeys.some(k => selectedKeys.has(k));
+    const selAll = document.getElementById('sel-all');
+    if (selAll) { selAll.checked = allSel; selAll.indeterminate = !allSel && someSel; }
+}
+
+function toggleSelectAll(cb) {
+    const keys = getFiltered().map(rowKey);
+    if (cb.checked) keys.forEach(k => selectedKeys.add(k));
+    else            keys.forEach(k => selectedKeys.delete(k));
+    syncSelectionUI();
+}
+
+function selectProblems() {
+    getFiltered()
+        .filter(r => r.status === 'fail' || r.status === 'extra')
+        .forEach(r => selectedKeys.add(rowKey(r)));
+    syncSelectionUI();
+}
+
+function clearSelection() {
+    selectedKeys.clear();
+    syncSelectionUI();
+}
 
 async function loadData() {
     document.getElementById('last-updated').textContent = 'Loading...';
@@ -134,7 +282,7 @@ async function loadData() {
         renderTable();
     } catch (e) {
         document.getElementById('conn-table').innerHTML =
-            `<tr><td colspan="9"><div class="no-data"><h3>Error loading data</h3><p>${e.message}</p></div></td></tr>`;
+            `<tr><td colspan="10"><div class="no-data"><h3>Error loading data</h3><p>${e.message}</p></div></td></tr>`;
     }
 }
 
@@ -309,16 +457,20 @@ function renderTable() {
 
     const tbody = document.getElementById('conn-table');
     if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9"><div class="no-data"><h3>No wiring rows match the filter</h3></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10"><div class="no-data"><h3>No wiring rows match the filter</h3></div></td></tr>';
+        updateSelCount();
         return;
     }
     tbody.innerHTML = rows.map(r => {
+        const k = rowKey(r);
+        const sel = selectedKeys.has(k);
         const portStateBadge = r.portState === 'Active'
             ? '<span class="status-pill pill-up">Active</span>'
             : r.portState === 'Down'
                 ? '<span class="status-pill pill-down">Down</span>'
                 : `<span class="status-pill pill-nowire">${r.portState}</span>`;
-        return `<tr class="conn-row ${r.status}">
+        return `<tr class="conn-row ${r.status}${sel ? ' selected' : ''}" data-key="${escapeHtml(k)}">
+            <td style="text-align:center;"><input type="checkbox" class="sel-checkbox" ${sel ? 'checked' : ''}></td>
             <td><strong>${escapeHtml(r.local)}</strong></td>
             <td class="mono">${escapeHtml(r.localPort)}</td>
             <td>${portStateBadge}</td>
@@ -330,6 +482,7 @@ function renderTable() {
             <td style="color:#aaa; font-size:12px;">${escapeHtml(r.note)}</td>
         </tr>`;
     }).join('');
+    updateSelCount();
 }
 
 function escapeHtml(s) {
@@ -339,8 +492,16 @@ function escapeHtml(s) {
 }
 
 // ---------- CSV download ----------
+// If any rows are selected (checked), export exactly those. Otherwise fall back
+// to the current filtered view. Matches the LLDPq "select problems -> download" flow.
 function downloadCSV() {
-    const rows = getFiltered();
+    const rows = selectedKeys.size > 0
+        ? allRows.filter(r => selectedKeys.has(rowKey(r)))
+        : getFiltered();
+    if (rows.length === 0) {
+        LLDPqUI.alert({ title: 'Nothing to export', message: 'No rows are selected or match the current filter.', type: 'warning' });
+        return;
+    }
     const header = [
         'Local Device','Local Port','Port State',
         'Expected Neighbor','Expected Port',
