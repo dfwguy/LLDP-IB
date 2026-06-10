@@ -45,7 +45,8 @@ fi
 # Persist to /etc/lldpq.conf so the CGI (diag-api.sh) and runner can `source` it.
 # UFM_SSH_HOST/UFM_SSH_USER let the Diagnostics page run ibdiagnet on the UFM
 # appliance; IBDIAGNET_* tune the scheduled run + parse-then-discard retention.
-for kv in "UFM_SSH_HOST=${UFM_SSH_HOST:-}" "UFM_SSH_USER=${UFM_SSH_USER:-root}" \
+for kv in "UFM_USERNAME=${UFM_USERNAME:-}" "UFM_PASSWORD=${UFM_PASSWORD:-}" \
+          "UFM_SSH_HOST=${UFM_SSH_HOST:-}" "UFM_SSH_USER=${UFM_SSH_USER:-root}" \
           "IBDIAGNET_TARGET=${IBDIAGNET_TARGET:-}" "IBDIAGNET_USER=${IBDIAGNET_USER:-admin}" \
           "IBDIAGNET_BIN=${IBDIAGNET_BIN:-ibdiagnet}" \
           "IBDIAGNET_KEEP_RAW=${IBDIAGNET_KEEP_RAW:-1}" "IBDIAGNET_KEEP_RUNS=${IBDIAGNET_KEEP_RUNS:-20}" \
@@ -208,9 +209,33 @@ fi
 # get-conf      = MLNX-OS running-config backup
 #
 # In LLDPQ_DEMO=true mode cron is skipped so the baked fake fabric stays put.
+# Data source: 'ssh' (per-switch SSH collection, ib-monitor) or 'ufm'/'hybrid'
+# (UFM REST adapter for fabric data + optional switch-local hardware via SSH).
+# 'auto' (default) picks hybrid when UFM_URL is configured, else ssh. NDR fabrics
+# with CLI-only MLNX-OS switches must use hybrid -- ib-monitor's shell-style
+# collection does not work against CLI-only admin accounts.
+DATA_SOURCE="${LLDPQ_DATA_SOURCE:-auto}"
+if [ "$DATA_SOURCE" = "auto" ]; then
+    if [ -n "${UFM_URL:-}" ]; then DATA_SOURCE="hybrid"; else DATA_SOURCE="ssh"; fi
+fi
+
 if [ "${LLDPQ_DEMO:-false}" = "true" ]; then
     rm -f /etc/cron.d/lldpq
     echo "  ✓ Cron disabled (demo mode -- fake data is static)"
+elif [ "$DATA_SOURCE" = "ufm" ] || [ "$DATA_SOURCE" = "hybrid" ]; then
+    # UFM-backed: ufm-adapter pulls topology/SM/links/pkeys/assets from UFM REST.
+    HW_LINE="# (switch hardware collection disabled: pure UFM mode)"
+    if [ "$DATA_SOURCE" = "hybrid" ]; then
+        HW_LINE="*/15 * * * * lldpq cd /home/lldpq/lldpq && bash ib-hw-collect.sh > /dev/null 2>&1"
+    fi
+    cat > /etc/cron.d/lldpq << CRON
+# LLDPq-IB ${DATA_SOURCE} mode -- fabric data from UFM REST
+*/10 * * * * lldpq cd /home/lldpq/lldpq && python3 ufm-adapter.py > /dev/null 2>&1
+${HW_LINE}
+* * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
+CRON
+    chmod 644 /etc/cron.d/lldpq
+    echo "  ✓ Cron: ${DATA_SOURCE} mode (UFM adapter every 10m$([ "$DATA_SOURCE" = "hybrid" ] && echo ' + switch HW every 15m'))"
 else
     cat > /etc/cron.d/lldpq << 'CRON'
 # LLDPq-IB full run (ib-assets + ib-monitor + alerts) - every 10 minutes

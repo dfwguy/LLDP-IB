@@ -180,7 +180,10 @@ RUN printf '%s\n' \
     'TRANSCEIVER_FW_UNKNOWN_MODEL_POLICY=skip' \
     'UFM_URL=' \
     'UFM_TOKEN=' \
+    'UFM_USERNAME=admin' \
+    'UFM_PASSWORD=' \
     'UFM_VERIFY_TLS=false' \
+    'LLDPQ_DATA_SOURCE=auto' \
     'UFM_SSH_HOST=' \
     'UFM_SSH_USER=root' \
     'IBDIAGNET_TARGET=' \

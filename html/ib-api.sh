@@ -339,17 +339,43 @@ except BlockingIOError:
     print(json.dumps({'success': False, 'error': 'Another command is running on this device'}))
     raise SystemExit
 
-# -------- Execute via SSH (sudo -u LLDPQ_USER so we use lldpq's SSH key) --------
+# -------- Execute via interactive enable-mode CLI --------
+# MLNX-OS admin accounts are CLI-only: `ssh host "cmd"` (exec) is rejected with
+# "UNIX shell commands cannot be executed using this account". So we open an
+# interactive enable-mode session over key auth, feed the command on stdin, then
+# strip the login banner + prompt echoes so the caller sees just the output.
 LLDPQ_USER = os.environ.get('LLDPQ_USER', 'lldpq')
+cli_input = f"enable\nno cli session paging enable\n{command}\nexit\nexit\n"
 try:
     result = subprocess.run(
         ['sudo', '-u', LLDPQ_USER, 'timeout', '60',
          'ssh', '-tt', '-o', 'StrictHostKeyChecking=no', '-o', 'BatchMode=yes',
+         '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR',
          '-o', 'ConnectTimeout=10',
-         f'{ssh_user}@{device_ip}', command],
-        capture_output=True, text=True, timeout=70,
+         f'{ssh_user}@{device_ip}'],
+        input=cli_input, capture_output=True, text=True, timeout=75,
     )
-    output = (result.stdout or '') + (('\n' + result.stderr) if result.stderr else '')
+    raw = (result.stdout or '').replace('\r', '')
+    prompt_re = re.compile(r'^\S+\s+\[[^\]]*\]\s+[>#]')  # "host [standalone: master] > cmd"
+    skip_prefix = ('Last login', 'Last failed login', 'There was ', 'There were ',
+                   'Number of total', 'Connection to ', 'Warning: Permanently added')
+    banners = ('NVIDIA Switch', 'NVIDIA MLNX-OS Switch Management')
+    # control lines = what we typed; the tty raw-echoes them before the shell runs
+    control = {'enable', 'no cli session paging enable', 'exit', command.strip()}
+    cleaned = []
+    for ln in raw.split('\n'):
+        s = ln.rstrip()
+        st = s.strip()
+        if prompt_re.match(s):                 # prompt-prefixed echoes
+            continue
+        if st in control or st in banners:     # raw command echoes + login banner
+            continue
+        if s.startswith(skip_prefix):
+            continue
+        cleaned.append(s)
+    output = '\n'.join(cleaned).strip()
+    if not output and result.stderr:
+        output = result.stderr.strip()
     print(json.dumps({
         'success': True,
         'device': device,
