@@ -55,7 +55,10 @@ if [ -z "$SSH_KEY" ] || [ ! -f "$SSH_KEY" ]; then
     exit 1
 fi
 
-# Prompt for password if not given
+# Password: -p flag, then SSH_PASSWORD env, then interactive prompt.
+if [ -z "$PASSWORD" ]; then
+    PASSWORD="${SSH_PASSWORD:-}"
+fi
 if [ -z "$PASSWORD" ]; then
     read -rsp "MLNX-OS admin password: " PASSWORD
     echo
@@ -68,6 +71,7 @@ if ! command -v sshpass >/dev/null 2>&1; then
 fi
 
 PUB_KEY="$(cat "$SSH_KEY")"
+PRIV_KEY="${SSH_KEY%.pub}"
 TOTAL=0
 SUCCESS=0
 FAILED=0
@@ -77,21 +81,26 @@ push_key() {
     local device=$1
     local user=$2
     local hostname=$3
-    
-    # MLNX-OS command to authorize the key
-    # NOTE: MLNX-OS expects the key in quoted form on a single line
+
+    # MLNX-OS command to authorize the key (quoted, single line).
     local cmd="ssh client user ${user} authorized-key sshv2 \"${PUB_KEY}\""
-    
-    # MLNX-OS CLI flow:
-    #   1. SSH in (password) ->
-    #   2. enable -> configure terminal -> <cmd> -> write memory
-    if timeout 20 sshpass -p "$PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=10 \
-            -o LogLevel=ERROR \
-            "${user}@${device}" \
-            "enable\nconfigure terminal\n${cmd}\nwrite memory\nexit\nexit\n" \
-            >/dev/null 2>&1; then
+
+    # MLNX-OS admin is CLI-only: feed enable-mode config over an interactive PTY
+    # (stdin), NOT as an `ssh host "cmd"` exec (which the switch rejects with
+    # "UNIX shell commands cannot be executed using this account").
+    printf 'enable\nconfigure terminal\n%s\nwrite memory\nexit\nexit\n' "$cmd" \
+        | timeout 30 sshpass -p "$PASSWORD" ssh -tt \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o PubkeyAuthentication=no \
+            -o PreferredAuthentications=keyboard-interactive,password \
+            -o ConnectTimeout=10 -o LogLevel=ERROR \
+            "${user}@${device}" >/dev/null 2>&1
+
+    # Verify key-based auth now works (the push exit code alone is not reliable).
+    if printf 'exit\n' | timeout 15 ssh -i "$PRIV_KEY" -tt \
+            -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 -o LogLevel=ERROR \
+            "${user}@${device}" >/dev/null 2>&1; then
         echo "  [OK]   ${hostname} (${device})"
         SUCCESS=$((SUCCESS+1))
     else

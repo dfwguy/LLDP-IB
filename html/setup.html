@@ -61,7 +61,16 @@
             <div class="setup-row"><span class="k">Key exists</span><span class="v" id="ssh-exists">-</span></div>
             <div class="setup-row"><span class="k">Key file</span><span class="v" id="ssh-file">-</span></div>
             <div class="copy-box" id="ssh-key-box">Loading...</div>
-            <p>Paste this on each MLNX-OS switch:</p>
+
+            <p style="margin-top:12px;color:#ccc;"><strong>Easiest:</strong> push the key to every switch in <code>devices.yaml</code> at once &mdash; enter the switch admin password once (used transiently, not stored):</p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <input type="password" id="ssh-push-pw" placeholder="switch admin password" autocomplete="new-password"
+                       style="flex:1; min-width:170px; padding:8px 10px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px;">
+                <button class="primary" onclick="pushSSHKey()">Push to all switches</button>
+            </div>
+            <div id="ssh-push-status" style="margin-top:8px; font-size:12px; color:#888;"></div>
+
+            <p style="margin-top:14px;">Or paste manually on each MLNX-OS switch (enable &rarr; configure terminal):</p>
             <div class="copy-box" id="ssh-cmd-box"></div>
             <div class="setup-actions">
                 <button class="primary" onclick="generateSSHKey()">Generate key</button>
@@ -182,6 +191,45 @@ async function generateSSHKey() {
         return;
     }
     await loadStatus();
+}
+
+async function pushSSHKey() {
+    const pwEl = document.getElementById('ssh-push-pw');
+    const status = document.getElementById('ssh-push-status');
+    const pw = pwEl.value;
+    if (!pw) { status.style.color = '#ff9800'; status.textContent = 'Enter the switch admin password first.'; return; }
+    const ok = await LLDPqUI.confirm({
+        title: 'Push SSH key to all switches?',
+        message: 'Authorizes the collector key on every switch in <code>devices.yaml</code> using the password you entered. The password is used once and not stored.',
+        confirmText: 'Push to all',
+    });
+    if (!ok) return;
+    status.style.color = '#888';
+    status.textContent = 'Pushing to switches (interactive enable-mode, this can take ~10-30s)...';
+    try {
+        const r = await fetch('/setup-api.sh?action=push-ssh-key', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password: pw}),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!data.success) {
+            status.style.color = '#f44336';
+            status.textContent = data.error || 'Push failed';
+            return;
+        }
+        pwEl.value = '';
+        const rows = (data.results || []).map(x =>
+            `${x.ok ? '<span style="color:#76b900;">[OK]</span>' : '<span style="color:#f44336;">[FAIL]</span>'} ${x.host} (${x.ip})`
+        ).join('<br>');
+        status.style.color = data.fail_count ? '#ff9800' : '#76b900';
+        status.innerHTML = `Pushed: ${data.ok_count}/${data.total} OK`
+            + (data.fail_count ? ` &middot; ${data.fail_count} failed (check password / reachability)` : '')
+            + (rows ? `<div style="margin-top:6px;color:#bbb;">${rows}</div>` : '');
+        loadStatus();
+    } catch (e) {
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+    }
 }
 
 async function queueCollection() {
