@@ -75,24 +75,29 @@
     <div class="diag-card">
         <h3>Fabric Diagnostic (ibdiagnet)</h3>
         <div class="sub">
-            Runs a full-fabric <code>ibdiagnet</code> on the selected target, parses the output into a compact
-            report, and <strong>discards the 2-3&nbsp;GB of raw files</strong> (retention keeps the latest archive
-            for download). This is the rich, fabric-wide health source &mdash; routing, PHY, rail validation,
-            per-lane PM, cable info, SM/PM state.
+            <code>ibdiagnet</code> is <strong>fabric-wide from a single vantage point</strong> &mdash; it runs on
+            <em>one</em> IB-connected node and scans the <strong>entire</strong> subnet from there (you do not run it
+            per switch). It parses the output into a compact report and <strong>discards the 2-3&nbsp;GB of raw
+            files</strong> (retention keeps the latest archive for download): routing, PHY, rail validation, per-lane
+            PM, cable info, SM/PM state.
+            <br><strong>Note:</strong> the target must have the <code>ibdiagnet</code> binary + IB access. MLNX-OS
+            switches are CLI-only and <strong>cannot</strong> run it &mdash; pick the UFM appliance (set
+            <code>UFM_SSH_HOST</code>), or just use the <strong>Local Fabric Scan</strong> above (runs in this
+            container, already covers the whole fabric, no setup).
         </div>
 
         <div class="builder-grid">
             <div>
-                <label style="font-size:12px;color:#aaa;display:block;margin-bottom:4px;">Target</label>
+                <label style="font-size:12px;color:#aaa;display:block;margin-bottom:4px;">Run from (one node — scans the whole fabric)</label>
                 <select id="diag-target" class="diag-panel" style="width:100%;padding:8px 10px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></select>
                 <div id="ufm-note" style="font-size:11px;color:#888;margin-top:4px;"></div>
 
                 <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="btn btn-secondary" style="padding:7px 12px;" onclick="applyGregoriPreset()">Full run preset</button>
+                    <button class="btn btn-secondary" style="padding:7px 12px;" onclick="applyFullPreset()">Full run preset</button>
                     <button class="btn btn-secondary" style="padding:7px 12px;" onclick="clearFlags()">Clear</button>
                 </div>
                 <div style="font-size:11px;color:#888;margin-top:6px;">
-                    "Full run preset" ticks every option (Gregori's reference command).
+                    "Full run preset" ticks every option (complete ibdiagnet diagnostic).
                 </div>
             </div>
 
@@ -326,7 +331,7 @@ function updatePreview() {
     document.getElementById('cmd-preview').textContent = `${currentBin()} ${cmd} -o <managed>`.replace(/\s+/g, ' ');
 }
 
-function applyGregoriPreset() {
+function applyFullPreset() {
     document.querySelectorAll('[data-flag]').forEach(cb => cb.checked = true);
     document.querySelectorAll('[data-out]').forEach(cb => {
         cb.checked = ['log','lst','sm','pm','iblinkinfo','fdbs','ar','far','slvl','rnc2'].includes(cb.getAttribute('data-out'));
