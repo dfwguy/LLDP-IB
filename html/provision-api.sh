@@ -1082,29 +1082,43 @@ def action_subnet_scan():
         base_deployed is always False on the IB edition (no sw-base marker).
         """
         try:
-            # MLNX-OS admin is CLI-only: exec (`ssh host "show inventory"`) is
-            # rejected ("UNIX shell commands cannot be executed"), so drive an
-            # interactive enable-mode session over a PTY and feed commands on stdin.
+            # MLNX-OS admin is CLI-only: exec is rejected, so drive an interactive
+            # enable-mode session over a PTY. One session yields:
+            #   - hostname : from the CLI prompt "host [standalone: master] #"
+            #   - mgmt MAC : "show interfaces mgmt0" -> "HW address : C4:70:.."
+            #   - serial   : "show inventory" CHASSIS row (MT-prefixed token)
+            # role is then inferred from the hostname pattern.
             r = subprocess.run(
-                ['sudo', '-u', LLDPQ_USER, 'timeout', '16', 'ssh', '-tt',
+                ['sudo', '-u', LLDPQ_USER, 'timeout', '18', 'ssh', '-tt',
                  '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6',
                  '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
                  '-o', 'LogLevel=ERROR', f'admin@{ip}'],
-                input='enable\nno cli session paging enable\nshow inventory\nexit\nexit\n',
-                capture_output=True, text=True, timeout=22
+                input='enable\nno cli session paging enable\nshow interfaces mgmt0\nshow inventory\nexit\nexit\n',
+                capture_output=True, text=True, timeout=24
             )
             out = r.stdout or ''
             combined = (out + ' ' + (r.stderr or '')).lower()
             # Key auth refused -> default creds still in place / key not installed.
             if 'permission denied' in combined:
-                return ip, 'not_provisioned', '', False
+                return ip, 'not_provisioned', '', False, '', '', ''
             if 'connection refused' in combined or 'no route to host' in combined:
-                return ip, 'other', '', False
+                return ip, 'other', '', False, '', '', ''
             looks_like_mlnx = (
                 'serial number' in combined or 'chassis' in combined
                 or 'mlnx-os' in combined or 'product release' in combined
+                or 'hw address' in combined
             )
-            # MLNX-OS chassis serial is the MT-prefixed token on the CHASSIS row.
+            # hostname from the CLI prompt
+            phost = ''
+            m = re.search(r'^(\S+)\s+\[[^\]]*\]\s*[>#]', out, re.MULTILINE)
+            if m:
+                phost = m.group(1)
+            # mgmt0 MAC ("HW address : C4:70:BD:14:29:38")
+            pmac = ''
+            mm = re.search(r'HW address\s*:\s*([0-9A-Fa-f:]{17})', out)
+            if mm:
+                pmac = mm.group(1).lower()
+            # chassis serial: MT-prefixed token on the CHASSIS row
             serial = ''
             for line in out.splitlines():
                 for tok in line.split():
@@ -1113,34 +1127,55 @@ def action_subnet_scan():
                         break
                 if serial:
                     break
-            # Key auth succeeded (no permission-denied) -> the switch is reachable
-            # by the collector key = provisioned.
+            # role inferred from the hostname pattern
+            prole = ''
+            h = phost.lower()
+            if 'superspine' in h or 'spine' in h:
+                prole = 'spine'
+            elif 'leaf' in h or '-tor' in h or 'tor-' in h:
+                prole = 'leaf'
+            elif 'core' in h:
+                prole = 'core'
+            elif 'border' in h or 'exit' in h or '-gw' in h:
+                prole = 'border'
+            # Key auth succeeded (no permission-denied) -> reachable by collector key.
             if looks_like_mlnx or serial or r.returncode == 0:
-                return ip, 'provisioned', serial, False
-            return ip, 'other', '', False
+                return ip, 'provisioned', serial, False, phost, pmac, prole
+            return ip, 'other', '', False, phost, pmac, prole
         except subprocess.TimeoutExpired:
-            return ip, 'other', '', False
+            return ip, 'other', '', False, '', '', ''
         except Exception:
-            return ip, 'other', '', False
+            return ip, 'other', '', False, '', '', ''
     
     ssh_results = {}
     serial_results = {}
     base_results = {}
+    probe_host = {}
+    probe_mac = {}
+    probe_role = {}
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {executor.submit(ssh_probe, ip): ip for ip in reachable_ips}
         for future in as_completed(futures):
-            ip, device_type, serial, base_deployed = future.result()
+            ip, device_type, serial, base_deployed, p_host, p_mac, p_role = future.result()
             ssh_results[ip] = device_type
             if serial:
                 serial_results[ip] = serial
             if base_deployed:
                 base_results[ip] = True
+            if p_host:
+                probe_host[ip] = p_host
+            if p_mac:
+                probe_mac[ip] = p_mac
+            if p_role:
+                probe_role[ip] = p_role
     
     # Step 4: Build entries with cross-reference
     entries = []
     for ip in all_ips:
         alive = ping_results.get(ip, False)
-        disc_mac = local_arp.get(ip, '')
+        # MAC: prefer ARP (local subnet); fall back to the switch's own mgmt0 MAC
+        # from the SSH probe (ARP can't see switches reached across an L3 hop).
+        disc_mac = local_arp.get(ip, '') or probe_mac.get(ip, '')
         binding = binding_by_ip.get(ip)
         
         hostname = ''
@@ -1160,14 +1195,18 @@ def action_subnet_scan():
         else:
             hostname = devices_yaml.get(ip, '')
             mac_status = 'no_binding'
+        # Fall back to the hostname the switch reported over SSH (for devices not
+        # yet in a binding or in devices.yaml).
+        if not hostname:
+            hostname = probe_host.get(ip, '')
         
         if not alive:
             device_type = 'unreachable'
         else:
             device_type = ssh_results.get(ip, 'other')
         
-        # Resolve role from devices.yaml
-        entry_role = devices_roles.get(hostname, '')
+        # Role from devices.yaml, else inferred from the hostname by the SSH probe.
+        entry_role = devices_roles.get(hostname, '') or probe_role.get(ip, '')
         
         entry = {
             'ip': ip,
