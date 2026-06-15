@@ -237,6 +237,7 @@ def build_sm_status(by_guid, ufm_version, ufm_host):
     return {
         "generated_at": now_iso(),
         "source": "ufm",
+        "managed_by": "ufm",
         "master_guid": "ufm-sm",
         "master_hostname": sms[0]["hostname"],
         "opensm_version": opensm,
@@ -248,7 +249,10 @@ def build_sm_status(by_guid, ufm_version, ufm_host):
             "master_count": 1,
             "standby_count": 0,
             "has_master": True,
-            "has_redundancy": False,
+            # UFM runs/owns the SM and provides its own appliance-level HA, so the
+            # single visible SM entry is not a real single-point-of-failure.
+            "has_redundancy": True,
+            "managed_by": "ufm",
             "disagreement_count": 0,
         },
     }
@@ -292,12 +296,19 @@ def build_link_errors(links, ports):
             })
     crit = sum(1 for p in problems if p["severity"] == "critical")
     warn = sum(1 for p in problems if p["severity"] == "warning")
+    # "Ports monitored" = active ports UFM is tracking (the page reads the
+    # top-level total_ports_monitored field).
+    active_ports = sum(1 for p in (ports or [])
+                       if str(p.get("logical_state", "")).lower() == "active")
+    monitored = active_ports or (total * 2)
     return {
         "generated_at": now_iso(),
         "source": "ufm",
+        "total_ports_monitored": monitored,
         "problem_ports": problems,
         "summary": {
             "total_ports": total,
+            "ports_monitored": monitored,
             "healthy": max(0, total - len(problems)),
             "critical": crit,
             "warning": warn,
@@ -307,6 +318,28 @@ def build_link_errors(links, ports):
             "flapping_1h": 0,
         },
     }
+
+
+def load_pkey_policy():
+    """Load expected_pkeys.yaml (partition drift policy) if present.
+    Returns (partitions_dict, path) or (None, None)."""
+    candidates = [
+        os.environ.get("EXPECTED_PKEYS", ""),
+        "/home/lldpq/lldpq/expected_pkeys.yaml",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "expected_pkeys.yaml"),
+    ]
+    for p in candidates:
+        if p and os.path.exists(p):
+            try:
+                import yaml
+                with open(p) as f:
+                    data = yaml.safe_load(f) or {}
+                parts = data.get("partitions") or {}
+                if parts:
+                    return parts, p
+            except Exception:
+                pass
+    return None, None
 
 
 def build_pkey(ufm, pkey_list, by_guid):
@@ -328,20 +361,71 @@ def build_pkey(ufm, pkey_list, by_guid):
             "policy_status": "n/a",
             "policy_notes": [],
         })
+
+    # --- Expected P_Key policy (drift check) -------------------------------
+    parts, ppath = load_pkey_policy()
+    actual_by_key = {str(r["pkey"]).lower(): r for r in rows}
+    expected_keys = {str(k).lower() for k in (parts or {})}
+    violations = []
+    total_sw = len(switches)
+    if parts:
+        for raw_key, spec in parts.items():
+            spec = spec or {}
+            key = str(raw_key).lower()
+            r = actual_by_key.get(key)
+            if not r:
+                violations.append({"severity": "critical", "pkey": raw_key, "type": "missing",
+                                   "message": "Expected partition not present in the fabric."})
+                continue
+            r["policy_status"] = "pass"
+            if str(spec.get("required_on", "")).lower() == "all" and r["device_count"] < total_sw:
+                r["policy_status"] = "violation"
+                violations.append({"severity": "warning", "pkey": raw_key, "type": "coverage",
+                                   "message": f"Present on {r['device_count']}/{total_sw} switches "
+                                              f"({total_sw - r['device_count']} missing)."})
+            minm = spec.get("min_members")
+            if isinstance(minm, (int, float)) and r.get("max_members", 0) < minm:
+                r["policy_status"] = "violation"
+                violations.append({"severity": "warning", "pkey": raw_key, "type": "members",
+                                   "message": f"Members {r.get('max_members', 0)} below expected minimum {int(minm)}."})
+            if "ipoib" in spec:
+                want = bool(spec.get("ipoib"))
+                have = "True" in (r.get("ipoib_states") or [])
+                if want != have:
+                    r["policy_status"] = "violation"
+                    violations.append({"severity": "warning", "pkey": raw_key, "type": "ipoib",
+                                       "message": f"IPoIB expected {'on' if want else 'off'} but is {'on' if have else 'off'}."})
+        for r in rows:
+            if str(r["pkey"]).lower() not in expected_keys:
+                r["policy_status"] = "unexpected"
+                violations.append({"severity": "info", "pkey": r["pkey"], "type": "unexpected",
+                                   "message": "Partition present but not declared in expected_pkeys.yaml."})
+
+    policy = {
+        "enabled": bool(parts),
+        "path": ppath or "",
+        "violations": violations,
+        "summary": {
+            "expected": len(parts) if parts else 0,
+            "pass": len([r for r in rows if r["policy_status"] == "pass"]),
+            "warning": len([v for v in violations if v["severity"] == "warning"]),
+            "missing": len([v for v in violations if v["type"] == "missing"]),
+            "unexpected": len([v for v in violations if v["type"] == "unexpected"]),
+        },
+    }
     return {
         "generated_at": now_iso(),
         "source": "ufm",
         "pkeys": rows,
         "per_device": {h: [{"pkey": r["pkey"]} for r in rows] for h in switches},
-        "policy": {"enabled": False, "violations": [],
-                   "summary": {"expected": 0, "pass": 0, "warning": 0, "missing": 0, "unexpected": 0}},
+        "policy": policy,
         "summary": {
             "total_pkeys": len(rows),
             "partition_count": len(rows),
             "devices_polled": len(switches),
             "inconsistencies": 0,
             "inconsistency_count": 0,
-            "policy_violations": 0,
+            "policy_violations": len(violations),
         },
     }
 

@@ -38,11 +38,14 @@ MAXP="${HW_MAX_PARALLEL:-10}"
 SSH_OPTS=(-i "$KEY" -tt -o BatchMode=yes -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o LogLevel=ERROR)
 
-# One interactive enable-mode session per switch; capture all five show commands.
+# One interactive enable-mode session per switch; capture hardware shows plus the
+# actionable log severities (CRIT/ERR/WARN only -- NOT the full 30k-line log, which
+# would be MB-per-switch). Log commands run LAST so hardware is captured first even
+# if a noisy switch hits the timeout.
 collect_one() {
     local dev=$1 user=$2 host=$3
-    printf 'enable\nno cli session paging enable\nshow version\nshow inventory\nshow temperature\nshow fan\nshow power\nexit\nexit\n' \
-        | timeout 45 ssh "${SSH_OPTS[@]}" "${user}@${dev}" 2>/dev/null \
+    printf 'enable\nno cli session paging enable\nshow version\nshow inventory\nshow temperature\nshow fan\nshow power\nshow log matching CRIT\nshow log matching ERR\nshow log matching WARN\nexit\nexit\n' \
+        | timeout 60 ssh "${SSH_OPTS[@]}" "${user}@${dev}" 2>/dev/null \
         | tr -d '\r' > "$RAWDIR/${host}.txt" || true
 }
 
@@ -140,14 +143,80 @@ json.dump({"generated_at": __import__("datetime").datetime.utcnow().strftime("%Y
 print(f"hardware: parsed {len(identity)} switches -> {hwdir}")
 PY
 
-# Generate the Hardware Health HTML from the normalized files (best effort).
-( cd "$RESULTS" && python3 "$SCRIPT_DIR/generate_hardware_html.py" >/dev/null 2>&1 ) || true
+# ---- Logs: extract syslog lines from the same raw capture, bucket by severity,
+# write per-device log files + a compact summary the device-based Logs page reads.
+LOGDIR="$RESULTS/logs"
+LOGSUMM="$RESULTS/ib_logs_summary.json"
+mkdir -p "$LOGDIR"
+python3 - "$RAWDIR" "$LOGDIR" "$LOGSUMM" <<'PY'
+import json, os, re, sys
+from datetime import datetime, timezone
+rawdir, logdir, summ_path = sys.argv[1], sys.argv[2], sys.argv[3]
+os.makedirs(logdir, exist_ok=True)
+
+# MLNX-OS syslog line: "Jun 15 15:53:47 host proc[pid]: [facility.SEVERITY]: msg"
+LINE = re.compile(r'^([A-Z][a-z]{2}\s+\d+\s+[\d:]+)\s+\S+\s+\S+:\s*\[[^.\]]+\.([A-Za-z]+)\]:\s*(.*)$')
+def bucket(sev):
+    s = sev.upper()
+    if s in ('CRIT', 'CRITICAL', 'ALERT', 'EMERG', 'FATAL'): return 'critical'
+    if s in ('ERR', 'ERROR'): return 'error'
+    if s in ('WARN', 'WARNING'): return 'warning'
+    return 'info'
+
+devices = []
+tot = {'critical': 0, 'error': 0, 'warning': 0, 'info': 0}
+for fn in sorted(os.listdir(rawdir)):
+    if not fn.endswith('.txt'):
+        continue
+    host = fn[:-4]
+    text = open(os.path.join(rawdir, fn), errors='replace').read()
+    counts = {'critical': 0, 'error': 0, 'warning': 0, 'info': 0}
+    seen = set(); lines = []
+    for ln in text.splitlines():
+        m = LINE.match(ln.strip())
+        if not m:
+            continue
+        b = bucket(m.group(2))
+        if b == 'info':
+            continue  # only CRIT/ERR/WARN were matched; ignore stray NOTICE hits
+        key = ln.strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        counts[b] += 1
+        lines.append(ln.strip())
+    lines = lines[::-1][:500]  # newest first, capped to keep the file small
+    with open(os.path.join(logdir, f'{host}.log'), 'w') as f:
+        f.write('\n'.join(lines) + ('\n' if lines else ''))
+    total = sum(counts.values())
+    for k in tot: tot[k] += counts[k]
+    devices.append({'device': host, 'critical': counts['critical'], 'error': counts['error'],
+                    'warning': counts['warning'], 'info': counts['info'], 'total': total})
+
+devices.sort(key=lambda d: (-d['total'], d['device']))
+json.dump({
+    'generated_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'source': 'switch-cli',
+    'note': 'Actionable severities only (CRIT/ERR/WARN); INFO/NOTICE not collected to stay lightweight.',
+    'devices': devices,
+    'summary': {'total_devices': len(devices), **tot, 'total': sum(tot.values())},
+}, open(summ_path, 'w'), indent=2)
+print(f"logs: parsed {len(devices)} switches -> {summ_path}")
+PY
+
+# Generate the Hardware Health HTML. generate_hardware_html.py uses paths relative
+# to the repo dir (monitor-results/hardware-data, monitor-results/assets.ini, and
+# writes monitor-results/hardware-analysis.html), so it MUST run from SCRIPT_DIR,
+# not from inside monitor-results (that nests the paths and yields N/A columns).
+( cd "$SCRIPT_DIR" && python3 generate_hardware_html.py >/dev/null 2>&1 ) || true
 
 # Publish to web root.
-mkdir -p "$WEB_ROOT/monitor-results/hardware-data"
+mkdir -p "$WEB_ROOT/monitor-results/hardware-data" "$WEB_ROOT/monitor-results/logs"
 cp -f "$HWDIR"/*.txt "$WEB_ROOT/monitor-results/hardware-data/" 2>/dev/null || true
 cp -f "$RESULTS/hardware-analysis.html" "$WEB_ROOT/monitor-results/" 2>/dev/null || true
 cp -f "$IDENTITY" "$WEB_ROOT/monitor-results/" 2>/dev/null || true
-chown -R "$LLDPQ_USER:www-data" "$WEB_ROOT/monitor-results/hardware-data" 2>/dev/null || true
+cp -f "$LOGSUMM" "$WEB_ROOT/monitor-results/" 2>/dev/null || true
+cp -f "$LOGDIR"/*.log "$WEB_ROOT/monitor-results/logs/" 2>/dev/null || true
+chown -R "$LLDPQ_USER:www-data" "$WEB_ROOT/monitor-results/hardware-data" "$WEB_ROOT/monitor-results/logs" 2>/dev/null || true
 
 echo "ib-hw-collect done."

@@ -135,9 +135,13 @@ function render(data) {
     document.getElementById('total-sms').textContent = summary.total_sms || 0;
     document.getElementById('disagreement-count').textContent = (data.disagreements || []).length;
 
+    const ufmManaged = (data.managed_by === 'ufm') || (summary.managed_by === 'ufm') || (data.source === 'ufm');
     if (!hasMaster) {
         document.getElementById('no-master-banner').innerHTML =
             '<div class="alert-box alert-danger"><strong>No master Subnet Manager detected.</strong> The fabric may not be operational. Check sminfo on each switch.</div>';
+    } else if (ufmManaged) {
+        document.getElementById('no-master-banner').innerHTML =
+            '<div class="alert-box alert-info"><strong>SM managed by UFM.</strong> The Subnet Manager runs on the UFM appliance; UFM provides its own (appliance-level) SM high-availability. Switch-hosted standby SMs are not used in this deployment.</div>';
     } else if (summary.standby_count === 0) {
         document.getElementById('no-master-banner').innerHTML =
             '<div class="alert-box alert-warning"><strong>No standby Subnet Manager.</strong> Single-point-of-failure: enable a standby SM on another switch.</div>';

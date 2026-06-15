@@ -287,6 +287,11 @@ def parse_psu_power_in_out_from_hardware_file(device_name):
                 return total_psu_in, total_psu_out  # Still return for debugging
             return total_psu_in, total_psu_out
 
+        # MLNX-OS switches expose PSU INPUT power only (no output rail), so we can
+        # still report the input draw even though efficiency can't be computed.
+        if total_psu_in > 0:
+            return total_psu_in, None
+
         # Fallback: PMIC/VR and generic PSU Pwr(in/out)
         total_input_power = 0.0
         total_output_power = 0.0
@@ -510,9 +515,18 @@ def calculate_device_health_grade(device_name, device_data):
 def generate_hardware_html():
     """Generate hardware analysis HTML using existing data"""
     
-    # Parse assets.ini to get device model information
-    assets_data = parse_assets_file("assets.ini")
-    print(f"Loaded {len(assets_data)} device models from assets.ini")
+    # Parse assets.ini to get device model information. Look in several places so
+    # the Model column populates regardless of the generator's working directory
+    # (cron may run it from the repo dir, ib-hw-collect.sh runs it from results).
+    _assets_candidates = [
+        "assets.ini",
+        "monitor-results/assets.ini",
+        "/var/www/html/assets.ini",
+        "/home/lldpq/lldpq/monitor-results/assets.ini",
+    ]
+    assets_path = next((p for p in _assets_candidates if os.path.exists(p)), "assets.ini")
+    assets_data = parse_assets_file(assets_path)
+    print(f"Loaded {len(assets_data)} device models from {assets_path}")
     
     # Read existing hardware history (create empty if doesn't exist)
     hardware_history = {}
@@ -924,6 +938,9 @@ def generate_hardware_html():
         psu_in_out_str = "N/A"
         if psu_in_w is not None and psu_out_w is not None:
             psu_in_out_str = f"{psu_in_w:.1f}W / {psu_out_w:.1f}W"
+        elif psu_in_w is not None:
+            # Input-only (MLNX-OS exposes no PSU output rail).
+            psu_in_out_str = f"{psu_in_w:.1f} W"
 
         # Get model information from assets
         device_model = assets_data.get(device_name, {}).get("model", "N/A")
@@ -937,7 +954,7 @@ def generate_hardware_html():
                     <td>{memory_usage if isinstance(memory_usage, (int, float)) else 0.0:.1f}%{mem_cell_suffix}</td>
                     <td>{cpu_load if isinstance(cpu_load, (int, float)) else 0.0:.2f}{load_cell_suffix}</td>
                     <td><span class="{fan_badge_class}">{fan_status}</span>{fan_cell_suffix}</td>
-                    <td>{psu_efficiency:.1f}%{psu_cell_suffix}</td>
+                    <td>{(f'{psu_efficiency:.1f}%' if psu_efficiency_parsed is not None else 'N/A')}{psu_cell_suffix}</td>
                     <td>{psu_in_out_str}</td>
                     <td>{device_model}</td>
                 </tr>

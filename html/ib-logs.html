@@ -2,59 +2,54 @@
 <html>
 <head>
     <link rel="shortcut icon" href="/png/favicon.ico">
-    <title>..::LLDPQ-IB:: Fabric Events</title>
+    <title>..::LLDPQ-IB:: Logs</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
     <style>
         .filter-bar { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin:18px 0; }
         .filter-group label { display:block; font-size:11px; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:.5px; }
-        .filter-bar select, .filter-bar input { background:#252526; border:1px solid #404040; color:#d4d4d4; padding:7px 10px; border-radius:4px; font-size:13px; }
-        .sev-pill { display:inline-block; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:600; letter-spacing:.4px; }
-        .sev-critical { background:rgba(244,67,54,.16); color:#ef5350; }
-        .sev-warning  { background:rgba(255,152,0,.16); color:#ffb74d; }
-        .sev-info     { background:rgba(120,120,120,.20); color:#aaa; }
-        .summary-grid .summary-card { cursor:pointer; transition:background .12s, box-shadow .12s; user-select:none; }
-        .summary-grid .summary-card:hover { background:#2d2d30; }
-        .summary-grid .summary-card.card-active { background:#2d2d30; box-shadow:0 0 0 2px rgba(118,185,0,.6); }
-        .src-guid { font-family:monospace; font-size:12px; color:#9ad; }
+        .filter-bar input { background:#252526; border:1px solid #404040; color:#d4d4d4; padding:7px 10px; border-radius:4px; font-size:13px; min-width:240px; }
+        .data-table tbody tr.dev-row { cursor:pointer; }
+        .data-table tbody tr.dev-row:hover { background:#2d2d30; }
+        .data-table tbody tr.dev-row.active { background:#2d2d30; box-shadow:inset 3px 0 0 #76b900; }
+        .cnt-crit { color:#ef5350; font-weight:600; }
+        .cnt-err  { color:#ff7043; font-weight:600; }
+        .cnt-warn { color:#ffb74d; font-weight:600; }
+        .cnt-zero { color:#555; }
+        .log-panel { margin-top:18px; background:#1b1b1b; border:1px solid #333; border-radius:6px; display:none; }
+        .log-panel-head { padding:10px 14px; border-bottom:1px solid #333; color:#76b900; font-weight:600; display:flex; justify-content:space-between; align-items:center; }
+        .log-lines { max-height:520px; overflow:auto; padding:10px 14px; font-family:monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; }
+        .log-lines .l-crit { color:#ef5350; }
+        .log-lines .l-err  { color:#ff8a65; }
+        .log-lines .l-warn { color:#ffb74d; }
+        .note { color:#888; font-size:12px; margin:-6px 0 6px; }
     </style>
 </head>
 <body>
     <div class="page-header">
         <div>
-            <div class="page-title">Fabric Events (UFM)</div>
+            <div class="page-title">Logs</div>
             <div class="last-updated" id="last-updated"></div>
         </div>
-        <button class="btn btn-secondary" onclick="loadEvents()" style="padding:8px 16px;">Refresh</button>
+        <button class="btn btn-secondary" onclick="loadLogs()" style="padding:8px 16px;">Refresh</button>
     </div>
 
     <div id="banner"></div>
 
     <div class="summary-grid">
-        <div class="summary-card card-total"   onclick="filterSev('')"         title="All events"><div class="card-value" id="c-total">-</div><div class="card-label">Total Events</div></div>
-        <div class="summary-card card-danger"  onclick="filterSev('critical')" title="Critical only"><div class="card-value" id="c-critical">-</div><div class="card-label">Critical</div></div>
-        <div class="summary-card card-warning" onclick="filterSev('warning')"  title="Warning only"><div class="card-value" id="c-warning">-</div><div class="card-label">Warning</div></div>
-        <div class="summary-card card-info"    onclick="filterSev('info')"     title="Info only"><div class="card-value" id="c-info">-</div><div class="card-label">Info</div></div>
+        <div class="summary-card card-total"><div class="card-value" id="c-devices">-</div><div class="card-label">Devices</div></div>
+        <div class="summary-card card-danger"><div class="card-value" id="c-critical">-</div><div class="card-label">Critical</div></div>
+        <div class="summary-card card-warning"><div class="card-value" id="c-error">-</div><div class="card-label">Error</div></div>
+        <div class="summary-card card-info"><div class="card-value" id="c-warning">-</div><div class="card-label">Warning</div></div>
     </div>
+
+    <div class="note" id="src-note">Summary counts the actionable severities (Critical / Error / Warning) collected per switch every cycle (lightweight). 0/0/0 means the switch is clean. <strong>Click a device</strong> to pull its full live log on-demand (all severities, including Info).</div>
 
     <div class="filter-bar">
         <div class="filter-group">
-            <label>Severity</label>
-            <select id="f-sev" onchange="render()">
-                <option value="">All</option>
-                <option value="critical">Critical</option>
-                <option value="warning">Warning</option>
-                <option value="info">Info</option>
-            </select>
-        </div>
-        <div class="filter-group">
-            <label>Category</label>
-            <select id="f-cat" onchange="render()"><option value="">All</option></select>
-        </div>
-        <div class="filter-group" style="flex:1; min-width:220px;">
-            <label>Search</label>
-            <input type="text" id="f-search" placeholder="Description / source / category..." oninput="render()" autocomplete="off">
+            <label>Search device</label>
+            <input type="text" id="f-search" placeholder="Device name..." oninput="renderTable()" autocomplete="off">
         </div>
     </div>
 
@@ -62,108 +57,126 @@
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Time</th>
-                    <th>Severity</th>
-                    <th>Source</th>
-                    <th>Category</th>
-                    <th>Description</th>
+                    <th>Device</th>
+                    <th>Critical</th>
+                    <th>Error</th>
+                    <th>Warning</th>
+                    <th>Total</th>
                 </tr>
             </thead>
-            <tbody id="ev-table">
-                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading fabric events...</div></td></tr>
+            <tbody id="dev-table">
+                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading logs...</div></td></tr>
             </tbody>
         </table>
     </div>
 
+    <div class="log-panel" id="log-panel">
+        <div class="log-panel-head">
+            <span id="log-panel-title">Logs</span>
+            <span style="cursor:pointer;color:#888;" onclick="document.getElementById('log-panel').style.display='none'">&times; close</span>
+        </div>
+        <div class="log-lines" id="log-lines"></div>
+    </div>
+
 <script>
-let allEvents = [];
+let allDevices = [];
 
-document.addEventListener('DOMContentLoaded', loadEvents);
+document.addEventListener('DOMContentLoaded', loadLogs);
 
-async function loadEvents() {
-    const tbody = document.getElementById('ev-table');
-    tbody.innerHTML = '<tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading fabric events...</div></td></tr>';
+async function loadLogs() {
+    const tbody = document.getElementById('dev-table');
+    tbody.innerHTML = '<tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading logs...</div></td></tr>';
     try {
-        const r = await fetch('/ufm-api.sh?action=alerts', { cache: 'no-store' });
+        const r = await fetch('/monitor-results/ib_logs_summary.json?t=' + Date.now(), { cache: 'no-store' });
+        if (!r.ok) throw new Error('not collected yet');
         const data = await r.json();
-        if (!data.success) {
-            const isUfm = (data.error || '').toLowerCase().includes('ufm');
-            document.getElementById('banner').innerHTML =
-                '<div class="alert-box alert-warning" style="margin-bottom:16px;">' +
-                (isUfm
-                    ? 'UFM is not configured or unreachable. Configure it on the <a href="/ufm-status.html" target="_top" style="color:#76b900;">UFM</a> page.'
-                    : ('Could not load events: ' + escapeHtml(data.error || 'unknown error'))) +
-                '</div>';
-            tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No events</h3><p>Fabric events come from UFM.</p></div></td></tr>';
-            setCounts({});
-            return;
-        }
-        document.getElementById('banner').innerHTML = '';
-        allEvents = data.alerts || [];
-        setCounts(data.summary || {});
-        document.getElementById('c-total').textContent = data.count != null ? data.count : allEvents.length;
-        document.getElementById('last-updated').textContent = 'Last Updated: ' + new Date().toLocaleString('sv-SE').replace('T', ' ');
-        populateCategories();
-        render();
+        allDevices = data.devices || [];
+        const s = data.summary || {};
+        document.getElementById('c-devices').textContent  = s.total_devices != null ? s.total_devices : allDevices.length;
+        document.getElementById('c-critical').textContent = s.critical || 0;
+        document.getElementById('c-error').textContent    = s.error || 0;
+        document.getElementById('c-warning').textContent  = s.warning || 0;
+        document.getElementById('last-updated').textContent = data.generated_at
+            ? 'Last Updated: ' + new Date(data.generated_at).toLocaleString('sv-SE').replace('T', ' ') : '';
+        if (data.note) document.getElementById('src-note').textContent = data.note + ' Click a device to view its log lines.';
+        renderTable();
     } catch (e) {
         document.getElementById('banner').innerHTML =
-            '<div class="alert-box alert-warning" style="margin-bottom:16px;">Failed to load events: ' + escapeHtml(e.message) + '</div>';
-        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No events</h3></div></td></tr>';
+            '<div class="alert-box alert-info" style="margin-bottom:16px;">Per-device logs are collected in <strong>hybrid mode</strong> (switch SSH) on the next hardware cycle. ' +
+            'Fabric-wide events are on the <a href="/ufm-status.html" target="_top" style="color:#76b900;">UFM</a> page.</div>';
+        document.getElementById('dev-table').innerHTML =
+            '<tr><td colspan="5"><div class="no-data"><h3>No device logs yet</h3></div></td></tr>';
+        ['c-devices','c-critical','c-error','c-warning'].forEach(id => document.getElementById(id).textContent = '0');
     }
 }
 
-function setCounts(summary) {
-    document.getElementById('c-critical').textContent = summary.critical != null ? summary.critical : 0;
-    document.getElementById('c-warning').textContent  = summary.warning  != null ? summary.warning  : 0;
-    document.getElementById('c-info').textContent     = summary.info     != null ? summary.info     : 0;
-}
-
-function populateCategories() {
-    const cats = [...new Set(allEvents.map(e => e.category).filter(Boolean))].sort();
-    const sel = document.getElementById('f-cat');
-    sel.innerHTML = '<option value="">All</option>' + cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
-}
-
-function filterSev(sev) {
-    document.getElementById('f-sev').value = sev;
-    render();
-}
-
-function syncActiveCard() {
-    const sev = document.getElementById('f-sev').value;
-    const map = { '': 'card-total', 'critical': 'card-danger', 'warning': 'card-warning', 'info': 'card-info' };
-    document.querySelectorAll('.summary-grid .summary-card').forEach(c => c.classList.remove('card-active'));
-    const el = document.querySelector('.summary-grid .summary-card.' + map[sev]);
-    if (el) el.classList.add('card-active');
-}
-
-function render() {
-    syncActiveCard();
-    const sev = document.getElementById('f-sev').value;
-    const cat = document.getElementById('f-cat').value;
-    const search = document.getElementById('f-search').value.trim().toLowerCase();
-    const rows = allEvents.filter(e => {
-        if (sev && e.severity !== sev) return false;
-        if (cat && e.category !== cat) return false;
-        if (search) {
-            const hay = `${e.description} ${e.source} ${e.category} ${e.severity_raw}`.toLowerCase();
-            if (!hay.includes(search)) return false;
-        }
-        return true;
-    });
-    const tbody = document.getElementById('ev-table');
+function renderTable() {
+    const q = document.getElementById('f-search').value.trim().toLowerCase();
+    const rows = allDevices.filter(d => !q || (d.device || '').toLowerCase().includes(q));
+    const tbody = document.getElementById('dev-table');
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No matching events</h3></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No matching devices</h3></div></td></tr>';
         return;
     }
-    tbody.innerHTML = rows.map(e => `
-        <tr>
-            <td style="white-space:nowrap;">${escapeHtml(e.timestamp || '-')}</td>
-            <td><span class="sev-pill sev-${e.severity || 'info'}">${escapeHtml(e.severity_raw || e.severity || 'info')}</span></td>
-            <td class="src-guid">${escapeHtml(e.source || '-')}</td>
-            <td>${escapeHtml(e.category || '-')}</td>
-            <td>${escapeHtml(e.description || '-')}</td>
+    const cell = (n, cls) => n > 0 ? `<span class="${cls}">${n}</span>` : '<span class="cnt-zero">0</span>';
+    tbody.innerHTML = rows.map(d => `
+        <tr class="dev-row" onclick="showDeviceLog('${escapeHtml(d.device)}', this)">
+            <td><strong>${escapeHtml(d.device)}</strong></td>
+            <td>${cell(d.critical, 'cnt-crit')}</td>
+            <td>${cell(d.error, 'cnt-err')}</td>
+            <td>${cell(d.warning, 'cnt-warn')}</td>
+            <td>${d.total || 0}</td>
         </tr>`).join('');
+}
+
+function sevClass(line) {
+    const u = line.toUpperCase();
+    if (/\.(CRIT|ALERT|EMERG|FATAL)\]/.test(u)) return 'l-crit';
+    if (/\.(ERR|ERROR)\]/.test(u)) return 'l-err';
+    if (/\.(WARN|WARNING)\]/.test(u)) return 'l-warn';
+    return '';
+}
+
+// Click a device -> pull its FULL log live (on-demand, not cron) so we can show
+// every severity (including the Notice/Info bulk) without keeping MB-per-switch
+// log files on a schedule.
+async function showDeviceLog(device, rowEl) {
+    document.querySelectorAll('#dev-table tr.dev-row').forEach(r => r.classList.remove('active'));
+    if (rowEl) rowEl.classList.add('active');
+    const panel = document.getElementById('log-panel');
+    const out = document.getElementById('log-lines');
+    const title = document.getElementById('log-panel-title');
+    title.textContent = device + ' — loading full live log…';
+    panel.style.display = 'block';
+    out.textContent = 'Running "show log" on ' + device + ' …';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    try {
+        const resp = await fetch('/ib-api.sh?action=run-device-command', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device: device, command: 'show log' }),
+        });
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.error || 'command failed');
+        const lines = (data.output || '').split('\n').filter(l => l.trim());
+        // Count every severity from the [facility.SEV] token.
+        const c = { critical: 0, error: 0, warning: 0, info: 0 };
+        lines.forEach(l => {
+            const m = l.toUpperCase().match(/\.([A-Z]+)\]/);
+            const s = m ? m[1] : '';
+            if (['CRIT', 'ALERT', 'EMERG', 'FATAL'].includes(s)) c.critical++;
+            else if (['ERR', 'ERROR'].includes(s)) c.error++;
+            else if (['WARN', 'WARNING'].includes(s)) c.warning++;
+            else c.info++;
+        });
+        title.textContent = `${device} — ${lines.length} lines (Crit ${c.critical} · Err ${c.error} · Warn ${c.warning} · Info ${c.info}) · newest first, last 500 shown`;
+        const tail = lines.slice(-500).reverse();
+        out.innerHTML = tail.map(l => `<div class="${sevClass(l)}">${escapeHtml(l)}</div>`).join('')
+            || 'No log lines returned.';
+    } catch (e) {
+        out.textContent = 'Could not load live log for ' + device + ' (' + e.message + '). '
+            + 'Live log needs admin + switch SSH reachability.';
+        title.textContent = device + ' — log';
+    }
 }
 
 function escapeHtml(t) {
