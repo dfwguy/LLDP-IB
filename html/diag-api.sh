@@ -51,39 +51,63 @@ case "$ACTION" in
         ;;
 
     targets)
+        # ibdiagnet needs the ibdiagnet BINARY + IB access on the target. MLNX-OS
+        # switches are CLI-only and cannot run it, so they are intentionally NOT
+        # offered here (selecting one would always fail). Valid targets: a locally
+        # installed ibdiagnet (if the image ships it) or the configured UFM SSH
+        # appliance. For routine fabric health use the Local Fabric Scan instead.
+        HAS_LOCAL_IBDIAGNET="no"
+        command -v ibdiagnet >/dev/null 2>&1 && HAS_LOCAL_IBDIAGNET="yes"
+        export HAS_LOCAL_IBDIAGNET
         python3 <<'PY'
 import json, os
-lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
 targets = []
-# Devices from devices.yaml
-try:
-    import yaml
-    data = yaml.safe_load(open(lldpq_dir + '/devices.yaml')) or {}
-    defaults = data.get('defaults', {})
-    duser = defaults.get('username', 'admin')
-    for ip, val in (data.get('devices', {}) or {}).items():
-        host = ''
-        user = duser
-        if isinstance(val, str):
-            parts = val.strip().split()
-            host = parts[0] if parts else ''
-        elif isinstance(val, dict):
-            host = val.get('hostname', '')
-            user = val.get('username', duser)
-        if host:
-            targets.append({'id': host, 'label': f'{host} ({ip})', 'kind': 'switch', 'user': user})
-except Exception:
-    pass
-# Configured UFM appliance (SSH), if any
+if os.environ.get('HAS_LOCAL_IBDIAGNET') == 'yes':
+    targets.append({'id': 'localhost', 'label': 'This container (local ibdiagnet, direct IB)',
+                    'kind': 'local', 'user': ''})
 ufm_host = os.environ.get('UFM_SSH_HOST', '')
 if ufm_host:
-    targets.append({
-        'id': 'ufm',
-        'label': f'UFM appliance ({ufm_host})',
-        'kind': 'ufm',
-        'user': os.environ.get('UFM_SSH_USER', 'root'),
-    })
-print(json.dumps({'success': True, 'targets': targets, 'ufm_configured': bool(ufm_host)}))
+    targets.append({'id': 'ufm', 'label': f'UFM appliance ({ufm_host})', 'kind': 'ufm',
+                    'user': os.environ.get('UFM_SSH_USER', 'root')})
+print(json.dumps({
+    'success': True,
+    'targets': targets,
+    'ufm_configured': bool(ufm_host),
+    'local_ibdiagnet': os.environ.get('HAS_LOCAL_IBDIAGNET') == 'yes',
+}))
+PY
+        ;;
+
+    delete)
+        # Delete one diagnostic run (json + status + raw archive) and drop it from
+        # the index. The runs dir is group-writable (lldpq:www-data), so the CGI
+        # user can remove without sudo.
+        RUN="${QUERY_STRING#*run=}"
+        RUN="${RUN%%&*}"
+        RUN=$(printf '%s' "$RUN" | tr -cd 'A-Za-z0-9TZ_-')
+        if [ -z "$RUN" ]; then
+            echo '{"success": false, "error": "No run id"}'
+            exit 0
+        fi
+        rm -f "$RUNS_DIR/${RUN}.json" "$RUNS_DIR/${RUN}.status" "$RUNS_DIR/${RUN}.tar.gz" 2>/dev/null
+        export DEL_RUN="$RUN" DEL_DIR="$RUNS_DIR"
+        python3 <<'PY'
+import json, os
+runs_dir = os.environ['DEL_DIR']; run_id = os.environ['DEL_RUN']
+idx = os.path.join(runs_dir, 'index.json')
+try:
+    data = json.load(open(idx))
+except Exception:
+    data = []
+before = len(data)
+data = [e for e in data if e.get('run_id') != run_id]
+try:
+    with open(idx, 'w') as f:
+        json.dump(data, f, indent=2)
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}))
+    raise SystemExit
+print(json.dumps({'success': True, 'deleted': run_id, 'removed': before - len(data)}))
 PY
         ;;
 

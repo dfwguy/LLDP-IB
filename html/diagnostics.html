@@ -266,20 +266,28 @@ function buildOutputChips() {
 async function loadTargets() {
     const sel = document.getElementById('diag-target');
     const note = document.getElementById('ufm-note');
+    const runBtn = document.getElementById('run-diag-btn');
     try {
         const r = await fetch('/diag-api.sh?action=targets', {cache:'no-store'});
         const data = await r.json();
         const targets = (data && data.targets) || [];
         if (!targets.length) {
-            sel.innerHTML = '<option value="">No targets in devices.yaml</option>';
+            sel.innerHTML = '<option value="">No ibdiagnet-capable target</option>';
+            sel.disabled = true;
+            if (runBtn) runBtn.disabled = true;
+            note.innerHTML = 'Nothing here can run <code>ibdiagnet</code>: MLNX-OS switches are CLI-only, and no local <code>ibdiagnet</code> binary or <code>UFM_SSH_HOST</code> is configured. ' +
+                'Use the <strong>Local Fabric Scan</strong> above (works now, covers the whole fabric), or set <code>UFM_SSH_HOST</code> to a node that has ibdiagnet.';
         } else {
             sel.innerHTML = targets.map(t => `<option value="${t.id}" data-kind="${t.kind}">${t.label}</option>`).join('');
+            sel.disabled = false;
+            if (runBtn) runBtn.disabled = false;
+            note.textContent = data.local_ibdiagnet
+                ? 'Local ibdiagnet available in this container.'
+                : (data.ufm_configured ? 'UFM appliance available as a target.' : '');
         }
-        note.textContent = data.ufm_configured
-            ? 'UFM appliance available as a target.'
-            : 'Tip: set UFM_SSH_HOST to run ibdiagnet on the UFM appliance.';
     } catch (e) {
         sel.innerHTML = '<option value="">Cannot load targets</option>';
+        if (runBtn) runBtn.disabled = true;
         note.textContent = 'Error: ' + e.message;
     }
 }
@@ -492,7 +500,13 @@ async function loadRun(runId) {
 function renderSummary(d) {
     const body = document.getElementById('result-body');
     if (!d || d.parsed === false) {
-        body.innerHTML = `<div class="no-data" style="padding:24px 0;"><h3>No fabric diagnostic yet</h3><p>${esc((d && d.message) || 'Build a run above and click Run Fabric Diagnostic.')}</p></div>`;
+        const err = d && d.error;
+        const title = err ? 'Run produced no diagnostic output' : 'No fabric diagnostic yet';
+        let msg = (d && (d.error || d.message)) || 'Build a run above and click Run Fabric Diagnostic.';
+        if (err && /log file|no.*output/i.test(err)) {
+            msg += ' \u2014 MLNX-OS switches are CLI-only and cannot run ibdiagnet. Run it on the UFM appliance (set UFM_SSH_HOST), or use the Local Fabric Scan above (it already covers the whole fabric from this container).';
+        }
+        body.innerHTML = `<div class="no-data" style="padding:24px 0;"><h3>${esc(title)}</h3><p>${esc(msg)}</p></div>`;
         return;
     }
     const t = d.totals || {};
@@ -540,15 +554,37 @@ async function loadHistory() {
         const body = document.getElementById('history-body');
         if (!Array.isArray(runs) || !runs.length) { det.style.display = 'none'; return; }
         det.style.display = '';
-        let html = `<table class="data-table"><thead><tr><th>Run</th><th>Target</th><th>Finished</th><th class="num">Errors</th><th class="num">Warnings</th></tr></thead><tbody>`;
+        let html = `<table class="data-table"><thead><tr><th>Run</th><th>Target</th><th>Finished</th><th class="num">Errors</th><th class="num">Warnings</th><th></th></tr></thead><tbody>`;
         for (const e of runs) {
             html += `<tr style="cursor:pointer;" onclick="loadRun('${esc(e.run_id)}')">
                 <td class="mono">${esc(e.run_id)}</td><td>${esc(e.target||'-')}</td><td>${esc(e.finished_at||'-')}</td>
-                <td class="num">${fmt(e.errors)}</td><td class="num">${fmt(e.warnings)}</td></tr>`;
+                <td class="num">${fmt(e.errors)}</td><td class="num">${fmt(e.warnings)}</td>
+                <td><button class="btn btn-secondary" style="padding:3px 10px;font-size:12px;" onclick="event.stopPropagation(); deleteRun('${esc(e.run_id)}')">Delete</button></td></tr>`;
         }
         html += `</tbody></table>`;
         body.innerHTML = html;
     } catch (e) { /* no history */ }
+}
+
+async function deleteRun(runId) {
+    const ok = await LLDPqUI.confirm({
+        title: 'Delete diagnostic run',
+        message: `Delete run ${runId}? This removes its parsed result and raw archive.`,
+        confirmText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    try {
+        const r = await fetch('/diag-api.sh?action=delete&run=' + encodeURIComponent(runId), { cache: 'no-store' });
+        const d = await r.json();
+        if (d.success) {
+            await loadHistory();
+            loadLatest();
+        } else {
+            LLDPqUI.alert({ title: 'Delete failed', message: d.error || 'Unknown error', type: 'error' });
+        }
+    } catch (e) {
+        LLDPqUI.alert({ title: 'Delete error', message: e.message, type: 'error' });
+    }
 }
 
 // ---------------- helpers ----------------
