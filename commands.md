@@ -12,20 +12,88 @@ scope.
 ## Important Rules
 
 - LLDPq-IB does **not** prepend `sudo` to MLNX-OS switch commands.
-- MLNX-OS native commands are sent to the switch CLI as `show ...`.
-- ibutils are run through the MLNX-OS CLI `ib ...` prefix.
-- Heavy commands such as `ib ibroute` are **manual only**, never cron.
+- MLNX-OS admin accounts are **CLI-only**: `ssh host "command"` (exec mode) is
+  rejected ("UNIX shell commands cannot be executed"). LLDPq-IB drives an
+  interactive enable-mode session (`ssh -tt`) and pipes the commands in.
+- MLNX-OS does **not** support shell pipes in the CLI (`show ... | tail` returns
+  "Command not filterable"). Native filters such as `show log matching <regex>`
+  are used instead.
+- On MLNX-OS 3.12 the `ib` keyword is the **`ibdiagnet` wrapper**, NOT a generic
+  prefix for individual ibutils. `ib sminfo`, `ib saquery`, `ib ibnetdiscover`,
+  `ib iblinkinfo`, `ib ibqueryerrors` do **not** work as standalone queries.
+  Fabric-wide data (topology, SM, links, P_Keys, transceivers, SHARP) therefore
+  comes from the **UFM REST API**; switch-local data (hardware, logs,
+  running-config) comes from `show ...`.
+- SSH key auth to MLNX-OS requires an **RSA** key (`ssh client user admin
+  authorized-key sshv2 "ssh-rsa ..."`); ed25519 is rejected by 3.12.
 - `ibdiagnet` is **on-demand by default**; it can be opt-in scheduled
   (`IBDIAGNET_SCHEDULE`) but always parses-then-discards its 2-3 GB output with a
   retention cap (see [Fabric Diagnostic](#fabric-diagnostic-ibdiagnet)).
 - SSH commands shown below run as the username from `devices.yaml` (normally
   `admin`).
 
-## Periodic Switch Collection
+## Data Source Modes
+
+`LLDPQ_DATA_SOURCE` (env, persisted to `/etc/lldpq.conf`) selects how data is
+collected. When `UFM_URL` is set the entrypoint selects **hybrid** automatically.
+
+| Mode | Fabric data (topology/SM/links/P_Key/transceiver/SHARP) | Switch-local data (HW/logs/config) |
+|---|---|---|
+| `ufm` | UFM REST (`ufm-adapter.py`) | none |
+| `hybrid` (recommended, MLNX-OS NDR + UFM) | UFM REST (`ufm-adapter.py`) | switch SSH (`ib-hw-collect.sh`, `get-configs.sh`) |
+| `ssh` (legacy) | per-switch SSH (`ib-monitor.sh`) — only on platforms where standalone ibutils run from the CLI; **not** MLNX-OS 3.12 | switch SSH |
+
+## UFM-Backed Hybrid Collection (default for MLNX-OS + UFM)
+
+Cron (`/etc/cron.d/lldpq`, written by `docker/docker-entrypoint.sh`):
+
+```text
+*/10 * * * *  python3 ufm-adapter.py            # fabric data from UFM REST
+*/15 * * * *  bash ib-hw-collect.sh             # switch hardware (enable-mode SSH)
+              && python3 generate_hardware_html.py
+              && cp monitor-results/hardware-analysis.html /var/www/html/monitor-results/
+*  * * * *    lldpq-trigger                      # web UI Refresh buttons
+0 */6 * * *   bash get-configs.sh                # running-config backup
+```
+
+`ufm-adapter.py` writes `monitor-results/ib_topology.json`, `ib_sm_status.json`,
+`ib_link_errors.json`, `ib_pkey.json`, `ib_sharp_status.json`,
+`transceiver_inventory.json`, and `assets.ini`. `ib-hw-collect.sh` writes
+`hardware-data/<host>_hardware.txt` and `switch_identity.json`. See
+[UFM REST API Calls](#ufm-rest-api-calls) and
+[Switch Hardware Collection](#switch-hardware-collection-hybrid-mode).
+
+## Switch Hardware Collection (hybrid mode)
+
+Source: `lldpq/ib-hw-collect.sh` (interactive enable-mode SSH, RSA key auth).
+
+```text
+show version
+show inventory
+show temperature
+show fan
+show power
+```
+
+Purpose:
+
+- MLNX-OS release, model, chassis serial, uptime -> `switch_identity.json`
+- ASIC/board temperature, fan RPM, PSU power -> `hardware-data/<host>_hardware.txt`
+- rendered into `hardware-analysis.html` by `generate_hardware_html.py`
+
+## Periodic Switch Collection (legacy `ssh` mode only)
 
 Source: `lldpq/ib-monitor.sh`
 
-Schedule: every 10 minutes via `/usr/local/bin/lldpq`, unless
+> **Legacy.** This single-session SSH collection only runs in `ssh` mode and is
+> **disabled in `ufm`/`hybrid` mode** (it exits early). The fabric-wide `ib ...`
+> commands below assume standalone ibutils run from the CLI, which is **not** the
+> case on MLNX-OS 3.12 (where `ib` = ibdiagnet). On MLNX-OS + UFM these data sets
+> come from the UFM REST API instead — see
+> [UFM REST API Calls](#ufm-rest-api-calls). The section is kept for non-MLNX-OS
+> platforms and historical reference.
+
+Schedule (ssh mode): every 10 minutes via `/usr/local/bin/lldpq`, unless
 `LLDPQ_DEMO=true`.
 
 Each switch is polled in one SSH session. Output is separated by marker
@@ -311,10 +379,10 @@ Command pushed to MLNX-OS:
 ssh client user <user> authorized-key sshv2 "<public-key>"
 ```
 
-Normally:
+Normally (MLNX-OS 3.12 requires an **RSA** key; ed25519 is rejected):
 
 ```text
-ssh client user admin authorized-key sshv2 "ssh-ed25519 ..."
+ssh client user admin authorized-key sshv2 "ssh-rsa AAAA..."
 ```
 
 Interactive CLI flow used by `send-key.sh`:
@@ -477,33 +545,16 @@ show interfaces ib <port> transceiver diagnostics
 show interfaces ib <port> counters
 ```
 
-Subnet Manager and topology:
+Subnet Manager and topology (MLNX-OS native; the `ib <util>` forms are NOT used):
 
 ```text
-ib sminfo
+show ib sm
 show ib smnodes
-ib ibswitches
-ib ibhosts
-ib ibnetdiscover -l
-ib iblinkinfo --line
-ib ibqueryerrors
-```
-
-P_Key, multicast and QoS:
-
-```text
 show ib partition
-show ib qos-profile
-ib saquery -m
 ```
 
-Performance and SHARP:
-
-```text
-ib perfquery -a
-ib ibqueryerrors --details
-show ib sharp aggregation-nodes
-```
+> Fabric-wide SM/topology/links/P_Key data is read from the UFM REST API
+> (`ufm-adapter.py`), not from per-switch `ib ...` commands.
 
 Management shell reads:
 
@@ -515,23 +566,24 @@ free -h
 df -h
 ```
 
-Logs:
+Logs (no shell pipes on MLNX-OS — native regex match only):
 
 ```text
-show log files
-show log continuous
 show log matching ERR
 show log matching WARN
-show log matching <ERR|WARN|INFO> | tail -n 200
+show log matching INFO
 ```
 
 Subnet Manager tab:
 
-```text
-ib sminfo
-```
+- Reads `monitor-results/ib_sm_status.json` (fabric SM from UFM); it does **not**
+  run a per-switch command (the IB SM is fabric-wide, on the UFM appliance).
 
-Optical/L1 detail:
+Optical tab:
+
+- Reads `monitor-results/transceiver_inventory.json` (per-switch transceiver
+  inventory, sourced from UFM `resources/ports?cable_info=true`). Clicking a row
+  runs live L1 detail:
 
 ```text
 show interfaces ib <port> transceiver diagnostics
@@ -709,11 +761,17 @@ get-configs.sh
 
 Source: `html/ufm-api.sh`
 
-All requests use:
+All requests use HTTP Basic auth:
 
 ```text
 Authorization: Basic <UFM_TOKEN>
 ```
+
+Credentials come from `/etc/lldpq.conf` (or container env):
+
+- `UFM_TOKEN` = base64(`username:password`), OR
+- `UFM_USERNAME` + `UFM_PASSWORD` (the UI Configure-UFM form takes these and
+  stores them as `UFM_TOKEN`; `ufm-adapter.py` also accepts them directly).
 
 TLS verification:
 
@@ -746,13 +804,30 @@ Purpose:
 ### Active events / alerts
 
 ```text
-GET <UFM_URL>/ufmRest/app/events?active=true
+GET <UFM_URL>/ufmRest/app/events
+```
+
+> UFM 6.x rejects `?active=true` (HTTP 400 "request argument 'active' is not
+> allowed"). LLDPq-IB fetches the full event list and normalizes/sorts locally.
+> Fields used: `severity`, `object_name` (source), `name` (description),
+> `timestamp`, `category`. Powers the **UFM** tab alerts and the **Logs**
+> (Fabric Events) page (`ib-logs.html`).
+
+Purpose:
+
+- fabric events / alerts (severity bucketed into critical/warning/info)
+- severity summary
+
+### Transceiver / cable inventory
+
+```text
+GET <UFM_URL>/ufmRest/resources/ports?cable_info=true&active=true
 ```
 
 Purpose:
 
-- active UFM alerts
-- severity summary
+- per-port transceiver part number, serial, FW, identifier, temperature, length
+- written to `transceiver_inventory.json` (Transceiver page + Device Optical tab)
 
 ### Systems
 
@@ -776,24 +851,30 @@ Purpose:
 - UFM link inventory
 - local-vs-UFM topology validation
 
-### BER / telemetry history
+### BER / telemetry history (not available on UFM 6.x REST)
 
 ```text
 GET <UFM_URL>/ufmRestV3/telemetry/historical/ports?<query>
 ```
 
-The UI passes query parameters after `action=ber-history&`, for example:
+> On UFM 6.x this endpoint (and all `/telemetry/...` REST paths) returns **404**;
+> the secondary telemetry exporter (port 9001) is not reachable from the LLDPq-IB
+> host in tested deployments. The `ber-history` proxy validates the response and
+> returns a clean JSON status (`success:false, available:false`) so the Telemetry
+> page shows an honest "not available — see Link Errors" message instead of
+> crashing on the 404 HTML. BER/error counters are surfaced on the **Link Errors**
+> page (current state, from `ufm-adapter.py` every 10 min) instead.
+
+### Endpoints intentionally NOT used (no UFM REST resource)
+
+UFM 6.x has **no** REST resource for these, so the related pages show an honest
+"not collected" state (use **Diagnostics → ibdiagnet** for on-demand data):
 
 ```text
-counter=ber_total_phy
-duration=<seconds>
-system_guid=<guid>
+/ufmRest/resources/mcast_groups   -> 404   (Multicast page)
+/ufmRest/resources/qos            -> 404   (QoS page)
+/ufmRest/resources/sl2vl          -> 404   (QoS page)
 ```
-
-Purpose:
-
-- BER history chart
-- UFM telemetry trends
 
 ### Topology validation
 
@@ -812,9 +893,15 @@ Output categories:
 only_in_local
 only_in_ufm
 common_count
+aggregation_excluded   # SHARP aggregation nodes (in UFM /modules, not /systems) — excluded so they don't look like a discrepancy
 local_link_count
 ufm_link_count
 ```
+
+> GUIDs are normalized (strip `0x`, lowercase) on both sides before comparison,
+> and SHARP aggregation nodes are excluded from the local set (UFM lists them
+> under `/resources/modules`, not `/resources/systems`). Without this, every node
+> would appear as a false discrepancy.
 
 ## UFM Configuration Writes
 
@@ -855,15 +942,19 @@ LLDPq-IB currently does not automate MLNX-OS upgrades.
 
 | Source | Sends to | Purpose |
 |---|---|---|
-| `lldpq/ib-monitor.sh` | IB switches | periodic monitoring collection |
-| `lldpq/ib-assets.sh` | IB switches | quick identity/reachability inventory |
+| `lldpq/ufm-adapter.py` | UFM REST API | **fabric data** (topology/SM/links/P_Key/transceiver/SHARP) + `assets.ini` (ufm/hybrid mode) |
+| `lldpq/ib-hw-collect.sh` | IB switches (enable-mode SSH) | switch hardware (version/inventory/temperature/fan/power) + `switch_identity.json` |
+| `lldpq/generate_hardware_html.py` | local (reads hardware-data) | renders `hardware-analysis.html` |
 | `lldpq/get-configs.sh` | IB switches | running-config backup |
-| `lldpq/send-key.sh` | IB switches | initial SSH public key installation |
+| `lldpq/send-key.sh` | IB switches | initial SSH public key installation (RSA) |
 | `html/mlnxos-ztp.sh` | local switch during ZTP | hostname/password/key/config bootstrap |
-| `html/ib-api.sh` | IB switches | safe command runner, live `ibtracert` |
+| `html/ib-api.sh` | IB switches | safe command runner, device data, live L1 detail |
 | `html/diagnostics.html` | IB switches through `ib-api.sh` | manual diagnostics |
 | `html/diag-api.sh` | launches `run-ibdiagnet.sh` | fabric diagnostic run/status/history API |
 | `lldpq/run-ibdiagnet.sh` | UFM appliance or IB switch | full-fabric `ibdiagnet` (parse-then-discard) |
-| `html/ufm-api.sh` | UFM REST API | UFM version, alerts, systems, links, BER history |
-| `html/setup-api.sh` | local trigger files | first collection queue |
+| `html/ufm-api.sh` | UFM REST API | UFM version, events, systems, links, cable_info, topology validation |
+| `html/ib-logs.html` | UFM REST API (via `ufm-api.sh`) | fabric events / log view |
+| `html/setup-api.sh` | local trigger files / `send-key.sh` | first collection queue, SSH key push |
+| `lldpq/ib-monitor.sh` | IB switches | **legacy** periodic collection (`ssh` mode only; disabled on MLNX-OS) |
+| `lldpq/ib-assets.sh` | IB switches | quick identity/reachability inventory (legacy/ssh) |
 

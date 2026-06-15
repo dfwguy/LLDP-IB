@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Fabric Events</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .filter-bar { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin:18px 0; }
+        .filter-group label { display:block; font-size:11px; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:.5px; }
+        .filter-bar select, .filter-bar input { background:#252526; border:1px solid #404040; color:#d4d4d4; padding:7px 10px; border-radius:4px; font-size:13px; }
+        .sev-pill { display:inline-block; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:600; letter-spacing:.4px; }
+        .sev-critical { background:rgba(244,67,54,.16); color:#ef5350; }
+        .sev-warning  { background:rgba(255,152,0,.16); color:#ffb74d; }
+        .sev-info     { background:rgba(120,120,120,.20); color:#aaa; }
+        .summary-grid .summary-card { cursor:pointer; transition:background .12s, box-shadow .12s; user-select:none; }
+        .summary-grid .summary-card:hover { background:#2d2d30; }
+        .summary-grid .summary-card.card-active { background:#2d2d30; box-shadow:0 0 0 2px rgba(118,185,0,.6); }
+        .src-guid { font-family:monospace; font-size:12px; color:#9ad; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Fabric Events (UFM)</div>
+            <div class="last-updated" id="last-updated"></div>
+        </div>
+        <button class="btn btn-secondary" onclick="loadEvents()" style="padding:8px 16px;">Refresh</button>
+    </div>
+
+    <div id="banner"></div>
+
+    <div class="summary-grid">
+        <div class="summary-card card-total"   onclick="filterSev('')"         title="All events"><div class="card-value" id="c-total">-</div><div class="card-label">Total Events</div></div>
+        <div class="summary-card card-danger"  onclick="filterSev('critical')" title="Critical only"><div class="card-value" id="c-critical">-</div><div class="card-label">Critical</div></div>
+        <div class="summary-card card-warning" onclick="filterSev('warning')"  title="Warning only"><div class="card-value" id="c-warning">-</div><div class="card-label">Warning</div></div>
+        <div class="summary-card card-info"    onclick="filterSev('info')"     title="Info only"><div class="card-value" id="c-info">-</div><div class="card-label">Info</div></div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label>Severity</label>
+            <select id="f-sev" onchange="render()">
+                <option value="">All</option>
+                <option value="critical">Critical</option>
+                <option value="warning">Warning</option>
+                <option value="info">Info</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Category</label>
+            <select id="f-cat" onchange="render()"><option value="">All</option></select>
+        </div>
+        <div class="filter-group" style="flex:1; min-width:220px;">
+            <label>Search</label>
+            <input type="text" id="f-search" placeholder="Description / source / category..." oninput="render()" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Severity</th>
+                    <th>Source</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody id="ev-table">
+                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading fabric events...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+let allEvents = [];
+
+document.addEventListener('DOMContentLoaded', loadEvents);
+
+async function loadEvents() {
+    const tbody = document.getElementById('ev-table');
+    tbody.innerHTML = '<tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading fabric events...</div></td></tr>';
+    try {
+        const r = await fetch('/ufm-api.sh?action=alerts', { cache: 'no-store' });
+        const data = await r.json();
+        if (!data.success) {
+            const isUfm = (data.error || '').toLowerCase().includes('ufm');
+            document.getElementById('banner').innerHTML =
+                '<div class="alert-box alert-warning" style="margin-bottom:16px;">' +
+                (isUfm
+                    ? 'UFM is not configured or unreachable. Configure it on the <a href="/ufm-status.html" target="_top" style="color:#76b900;">UFM</a> page.'
+                    : ('Could not load events: ' + escapeHtml(data.error || 'unknown error'))) +
+                '</div>';
+            tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No events</h3><p>Fabric events come from UFM.</p></div></td></tr>';
+            setCounts({});
+            return;
+        }
+        document.getElementById('banner').innerHTML = '';
+        allEvents = data.alerts || [];
+        setCounts(data.summary || {});
+        document.getElementById('c-total').textContent = data.count != null ? data.count : allEvents.length;
+        document.getElementById('last-updated').textContent = 'Last Updated: ' + new Date().toLocaleString('sv-SE').replace('T', ' ');
+        populateCategories();
+        render();
+    } catch (e) {
+        document.getElementById('banner').innerHTML =
+            '<div class="alert-box alert-warning" style="margin-bottom:16px;">Failed to load events: ' + escapeHtml(e.message) + '</div>';
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No events</h3></div></td></tr>';
+    }
+}
+
+function setCounts(summary) {
+    document.getElementById('c-critical').textContent = summary.critical != null ? summary.critical : 0;
+    document.getElementById('c-warning').textContent  = summary.warning  != null ? summary.warning  : 0;
+    document.getElementById('c-info').textContent     = summary.info     != null ? summary.info     : 0;
+}
+
+function populateCategories() {
+    const cats = [...new Set(allEvents.map(e => e.category).filter(Boolean))].sort();
+    const sel = document.getElementById('f-cat');
+    sel.innerHTML = '<option value="">All</option>' + cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+}
+
+function filterSev(sev) {
+    document.getElementById('f-sev').value = sev;
+    render();
+}
+
+function syncActiveCard() {
+    const sev = document.getElementById('f-sev').value;
+    const map = { '': 'card-total', 'critical': 'card-danger', 'warning': 'card-warning', 'info': 'card-info' };
+    document.querySelectorAll('.summary-grid .summary-card').forEach(c => c.classList.remove('card-active'));
+    const el = document.querySelector('.summary-grid .summary-card.' + map[sev]);
+    if (el) el.classList.add('card-active');
+}
+
+function render() {
+    syncActiveCard();
+    const sev = document.getElementById('f-sev').value;
+    const cat = document.getElementById('f-cat').value;
+    const search = document.getElementById('f-search').value.trim().toLowerCase();
+    const rows = allEvents.filter(e => {
+        if (sev && e.severity !== sev) return false;
+        if (cat && e.category !== cat) return false;
+        if (search) {
+            const hay = `${e.description} ${e.source} ${e.category} ${e.severity_raw}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+        }
+        return true;
+    });
+    const tbody = document.getElementById('ev-table');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No matching events</h3></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(e => `
+        <tr>
+            <td style="white-space:nowrap;">${escapeHtml(e.timestamp || '-')}</td>
+            <td><span class="sev-pill sev-${e.severity || 'info'}">${escapeHtml(e.severity_raw || e.severity || 'info')}</span></td>
+            <td class="src-guid">${escapeHtml(e.source || '-')}</td>
+            <td>${escapeHtml(e.category || '-')}</td>
+            <td>${escapeHtml(e.description || '-')}</td>
+        </tr>`).join('');
+}
+
+function escapeHtml(t) {
+    return String(t == null ? '' : t)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>

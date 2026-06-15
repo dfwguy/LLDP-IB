@@ -181,11 +181,17 @@ try:
         tx = json.load(f)
     device_modules = [m for m in tx.get('modules', []) if m.get('device') == device]
     for m in device_modules:
+        state = str(m.get('health') or '').lower()
         result['optical'].append({
             'port': m.get('port'),
+            'health': 'down' if state == 'down' else 'ok',
             'identifier': m.get('identifier'),
             'part_number': m.get('part_number'),
+            'serial_number': m.get('serial_number'),
             'fw_version': m.get('fw_version'),
+            'temperature': m.get('temperature'),
+            'technology': m.get('technology'),
+            'vendor': m.get('vendor'),
         })
 except Exception:
     pass

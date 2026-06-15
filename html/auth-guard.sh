@@ -35,7 +35,9 @@ _guard_deny() {
 }
 
 _guard_load_session() {
-    [[ -n "$LLDPQ_AUTH_ROLE" ]] && return 0
+    # set -u safe: these may be unset on the first call (callers can run under
+    # `set -u`, where a bare reference aborts the script with no output).
+    [[ -n "${LLDPQ_AUTH_ROLE:-}" ]] && return 0
     local token=$(_guard_get_cookie)
     if [[ ! "$token" =~ ^[A-Fa-f0-9]{64}$ ]]; then
         _guard_deny 401 "Not authenticated"
@@ -61,7 +63,7 @@ require_auth() {
 
 require_admin() {
     _guard_load_session
-    if [[ "$LLDPQ_AUTH_ROLE" != "admin" ]]; then
+    if [[ "${LLDPQ_AUTH_ROLE:-}" != "admin" ]]; then
         _guard_deny 403 "Admin privileges required"
     fi
 }

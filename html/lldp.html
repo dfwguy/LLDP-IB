@@ -28,6 +28,11 @@
         .conn-row.selected td:first-child { box-shadow: inset 3px 0 0 #76b900; }
         .sel-checkbox { cursor: pointer; width: 15px; height: 15px; accent-color: #76b900; vertical-align: middle; }
         .sel-count { color: #76b900; font-weight: 600; font-size: 12px; white-space: nowrap; }
+        /* Wiring summary cards: single row, clickable to filter the table */
+        .summary-grid.wiring-summary { grid-template-columns: repeat(5, 1fr); }
+        .summary-grid.wiring-summary .summary-card { cursor: pointer; transition: background .12s, box-shadow .12s; user-select: none; }
+        .summary-grid.wiring-summary .summary-card:hover { background: #2d2d30; }
+        .summary-grid.wiring-summary .summary-card.card-active { background: #2d2d30; box-shadow: 0 0 0 2px rgba(118,185,0,0.65); }
     </style>
 </head>
 <body>
@@ -67,24 +72,24 @@
         </div>
     </div>
 
-    <div class="summary-grid">
-        <div class="summary-card card-total">
+    <div class="summary-grid wiring-summary">
+        <div class="summary-card card-total card-active" onclick="filterByStatus('', this)" title="Show all rows">
             <div class="card-value" id="total-ports">-</div>
             <div class="card-label">Total Ports</div>
         </div>
-        <div class="summary-card card-success">
+        <div class="summary-card card-success" onclick="filterByStatus('pass', this)" title="Show only passing rows">
             <div class="card-value" id="pass-ports">-</div>
             <div class="card-label">Passing</div>
         </div>
-        <div class="summary-card card-danger">
+        <div class="summary-card card-danger" onclick="filterByStatus('fail', this)" title="Show only failing rows">
             <div class="card-value" id="fail-ports">-</div>
             <div class="card-label">Failing</div>
         </div>
-        <div class="summary-card card-warning">
+        <div class="summary-card card-warning" onclick="filterByStatus('extra', this)" title="Show only unexpected wiring">
             <div class="card-value" id="extra-ports">-</div>
             <div class="card-label">Unexpected Wiring</div>
         </div>
-        <div class="summary-card card-info">
+        <div class="summary-card card-info" onclick="filterByStatus('nowire', this)" title="Show only rows with no discovery data">
             <div class="card-value" id="noinfo-ports">-</div>
             <div class="card-label">No Discovery Data</div>
         </div>
@@ -426,6 +431,24 @@ function sortBy(field) {
     renderTable();
 }
 
+// Clicking a summary card filters the table by that status (in place, on screen).
+function filterByStatus(val) {
+    document.getElementById('filter-status').value = val;
+    renderTable();
+}
+
+// Keep the highlighted summary card in sync with the active status filter.
+function syncSummaryActive() {
+    const st = document.getElementById('filter-status').value;
+    const map = { '': 'card-total', 'pass': 'card-success', 'fail': 'card-danger', 'extra': 'card-warning', 'nowire': 'card-info' };
+    document.querySelectorAll('.summary-grid.wiring-summary .summary-card').forEach(c => c.classList.remove('card-active'));
+    const cls = map[st];
+    if (cls) {
+        const el = document.querySelector('.summary-grid.wiring-summary .summary-card.' + cls);
+        if (el) el.classList.add('card-active');
+    }
+}
+
 function getFiltered() {
     const dev = document.getElementById('filter-device').value;
     const st  = document.getElementById('filter-status').value;
@@ -442,6 +465,7 @@ function getFiltered() {
 }
 
 function renderTable() {
+    syncSummaryActive();
     let rows = getFiltered();
     rows.sort((a, b) => {
         const av = a[sortField] || '', bv = b[sortField] || '';

@@ -257,6 +257,13 @@ async function loadBerHistory() {
         const r = await fetch('/ufm-api.sh?action=ber-history&' + params.toString(),
                               { cache: 'no-store' });
         const raw = await r.json();
+        // The proxy always returns clean JSON. When UFM has no historical
+        // telemetry REST endpoint (common on 6.x), it reports success:false with
+        // a helpful message instead of leaking a 404 HTML page.
+        if (raw && raw.success === false) {
+            renderEmptyChart(empty, raw.error || 'UFM telemetry is not available on this UFM.');
+            return;
+        }
         // Normalize: UFM telemetry payloads vary by version. Accept both
         // [{port_guid, counter, results:[{timestamp,value}]}] and
         // {data: [{...same shape...}]}.

@@ -77,7 +77,10 @@ async function loadData() {
         renderTable();
     } catch (e) {
         document.getElementById('mc-table').innerHTML =
-            '<tr><td colspan="7"><div class="no-data"><h3>No multicast data yet</h3><p>Wait for the next monitor cycle.</p></div></td></tr>';
+            '<tr><td colspan="7"><div class="no-data"><h3>Multicast data not collected</h3>' +
+            '<p>UFM REST does not expose a multicast-group resource on this fabric. ' +
+            'Run <code>ibdiagnet</code> or <code>saquery -m</code> on demand from the ' +
+            '<a href="/diagnostics.html" target="_top" style="color:#76b900;">Diagnostics</a> page to inspect multicast groups.</p></div></td></tr>';
     }
 }
 

@@ -226,7 +226,9 @@ elif [ "$DATA_SOURCE" = "ufm" ] || [ "$DATA_SOURCE" = "hybrid" ]; then
     # UFM-backed: ufm-adapter pulls topology/SM/links/pkeys/assets from UFM REST.
     HW_LINE="# (switch hardware collection disabled: pure UFM mode)"
     if [ "$DATA_SOURCE" = "hybrid" ]; then
-        HW_LINE="*/15 * * * * lldpq cd /home/lldpq/lldpq && bash ib-hw-collect.sh > /dev/null 2>&1"
+        # Collect switch hardware, render the Hardware Analysis page, and mirror
+        # it into the web monitor-results (the working dir is NOT the web dir).
+        HW_LINE="*/15 * * * * lldpq cd /home/lldpq/lldpq && bash ib-hw-collect.sh >/dev/null 2>&1 && python3 generate_hardware_html.py >/dev/null 2>&1 && cp -f monitor-results/hardware-analysis.html /var/www/html/monitor-results/ 2>/dev/null"
     fi
     cat > /etc/cron.d/lldpq << CRON
 # LLDPq-IB ${DATA_SOURCE} mode -- fabric data from UFM REST

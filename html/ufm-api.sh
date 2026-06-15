@@ -101,31 +101,48 @@ print(json.dumps({
     # alerts: fetch active alerts from UFM
     # -------------------------------------------------------------------
     alerts)
-        RAW=$(ufm_get "/ufmRest/app/events?active=true")
+        # UFM 6.x: the events endpoint is /ufmRest/app/events. It does NOT accept
+        # an 'active' query arg (that returns HTTP 400 plain text). Fetch the full
+        # event list and normalize/sort here.
+        RAW=$(ufm_get "/ufmRest/app/events")
         python3 -c "
 import json, sys
+raw_text = sys.argv[1]
 try:
-    raw = json.loads(sys.argv[1])
+    raw = json.loads(raw_text)
 except Exception as e:
-    print(json.dumps({'success': False, 'error': f'Failed to parse UFM response: {e}'}))
+    print(json.dumps({'success': False, 'error': f'Failed to parse UFM response: {e}', 'raw': raw_text[:200]}))
     sys.exit(0)
 
-# UFM event schema (typical fields)
-# id, severity, source, description, timestamp, category, type
+# UFM event schema: id, name, type, event_type, severity, timestamp, counter,
+# category, object_name (the GUID/source).
 items = raw if isinstance(raw, list) else raw.get('events') or raw.get('items') or []
+
+def bucket(sev):
+    s = (sev or '').lower()
+    if 'crit' in s or 'error' in s or 'alert' in s or 'fatal' in s: return 'critical'
+    if 'warn' in s or 'minor' in s or 'major' in s: return 'warning'
+    return 'info'
+
 counts = {'critical': 0, 'warning': 0, 'info': 0}
 normalized = []
 for e in items:
-    sev = (e.get('severity') or '').lower()
-    if sev in counts: counts[sev] += 1
+    if not isinstance(e, dict):
+        continue
+    b = bucket(e.get('severity'))
+    counts[b] += 1
     normalized.append({
         'id': e.get('id') or e.get('event_id'),
-        'severity': sev or 'info',
-        'source': e.get('source') or e.get('source_id') or '',
-        'description': e.get('description') or e.get('msg') or '',
+        'severity': b,
+        'severity_raw': e.get('severity') or '',
+        'source': e.get('object_name') or e.get('source') or e.get('source_id') or '',
+        'description': e.get('name') or e.get('description') or e.get('msg') or '',
         'timestamp': e.get('timestamp') or e.get('time') or '',
         'category': e.get('category') or e.get('type') or '',
     })
+
+# Most recent first so the UI shows the latest events at the top.
+normalized.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
 
 print(json.dumps({
     'success': True,
@@ -190,7 +207,26 @@ print(json.dumps({
         # Pass arbitrary query params after action= straight to UFM
         # (e.g. action=ber-history&device_guid=0x...&duration=1h)
         RAW=$(ufm_get "/ufmRestV3/telemetry/historical/ports?${QUERY}")
-        echo "$RAW"
+        # IMPORTANT: validate the response. Many UFM 6.x deployments do not expose
+        # a historical telemetry endpoint on the main REST gateway (returns 404
+        # HTML), which would otherwise reach the browser as raw HTML and crash
+        # JSON.parse ("Unexpected token '<'"). Always emit clean JSON.
+        python3 -c "
+import json, sys
+raw_text = sys.argv[1]
+try:
+    data = json.loads(raw_text)
+except Exception:
+    print(json.dumps({
+        'success': False,
+        'available': False,
+        'error': 'UFM historical telemetry is not available via REST on this UFM version. '
+                 'BER and error counters are collected locally every ~5 minutes — see the Link Errors page.',
+    }))
+    sys.exit(0)
+# Valid JSON from UFM: pass it through unchanged for the UI normalizer.
+print(json.dumps(data))
+" "$RAW"
         ;;
 
     # -------------------------------------------------------------------
@@ -221,10 +257,33 @@ except Exception as e:
     print(json.dumps({'success': False, 'error': f'Local topology missing: {e}'}))
     sys.exit(0)
 
-local_guids = set((n.get('guid') or '').lower() for n in topo.get('nodes', []))
+# GUIDs are written with a '0x' prefix locally but UFM returns them bare; strip
+# the prefix and lowercase both sides so the comparison is apples-to-apples
+# (otherwise every node looks like a discrepancy).
+def norm_guid(g):
+    g = (g or '').strip().lower()
+    return g[2:] if g.startswith('0x') else g
+
+# SHARP aggregation nodes appear as link endpoints in our topology but UFM lists
+# them under /resources/modules, NOT /resources/systems -- so they would always
+# look like a 'discrepancy'. They are expected; exclude them from the compare.
+def is_aggregation(n):
+    d = ((n.get('description') or '') + ' ' + (n.get('hostname') or '')).lower()
+    return 'aggregation node' in d or (n.get('role') or '').lower() == 'aggregator'
+
+local_guids = set()
+aggregation_excluded = 0
+for n in topo.get('nodes', []):
+    g = norm_guid(n.get('guid'))
+    if not g:
+        continue
+    if is_aggregation(n):
+        aggregation_excluded += 1
+        continue
+    local_guids.add(g)
 ufm_guids = set()
 for s in ufm_systems:
-    g = (s.get('guid') or s.get('system_guid') or '').lower()
+    g = norm_guid(s.get('guid') or s.get('system_guid'))
     if g: ufm_guids.add(g)
 
 only_local = sorted(local_guids - ufm_guids)
@@ -238,6 +297,7 @@ print(json.dumps({
     'common_count': len(common),
     'only_in_local': only_local[:50],
     'only_in_ufm': only_ufm[:50],
+    'aggregation_excluded': aggregation_excluded,
     'ufm_link_count': len(ufm_links),
     'local_link_count': len(topo.get('links', [])),
 }))

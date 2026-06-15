@@ -21,58 +21,70 @@ Sister project of [LLDPq](https://github.com/aliaydemir/lldpq-src) (Ethernet/Cum
 ## What It Does
 
 - **Subnet Manager (SM) status** -- which switch is Master, fabric size, sweep
-- **IB Topology** -- discover switches, HCAs, links via `ibnetdiscover`
+- **IB Topology** -- switches, HCAs, links (from UFM REST in UFM/hybrid mode)
 - **Link errors** -- per-port LinkDowned, SymbolErrors, PortRcvErrors counters
 - **P_Key Report** -- partition (VLAN-equivalent) configuration across fabric
 - **Multicast Groups** -- IPoIB/MPI/NCCL group membership tracking
 - **QoS / Service Levels** -- SL-to-VL mapping per switch
 - **SHARP Aggregation Trees** -- NVIDIA in-network reduction visibility
 (auto-detected, shown only if SHARP is enabled)
-- **Transceiver Inventory** -- per-port vendor PN/SN, firmware version (via `mlxlink`)
-- **Optical Diagnostics** -- RX/TX power, temperature per cable
+- **Transceiver Inventory** -- per-port vendor PN/SN, firmware, temperature
+(from UFM `resources/ports?cable_info=true`)
+- **Hardware Health** -- power, fan, temperature per switch (enable-mode SSH)
+- **Fabric Events** -- UFM events/alerts as a filterable fabric log
 - **GUID / LID Search** -- fabric-wide search by GUID or LID
-- **IB Tracepath** -- visualize path between two HCAs (`ibtracert`)
-- **Hardware Health** -- power, fan, temperature, CPU/memory per switch
+- **IB Tracepath** -- path between two HCAs (topology BFS; live `ibtracert` where available)
 - **Provision (DHCP + MLNX-OS ZTP)** -- zero-touch provisioning for new switches
 
 ## Status
 
-**v0.4.0 — Phase 5b honest cleanup + Phase 6a/b (telemetry, registry, HW
-checklist, Ask AI rewrite, demo dataset).**
+**v0.6.0 — UFM-backed hybrid mode, validated against live MLNX-OS NDR
+switches + UFM 6.24.**
+
+### How it collects data (important)
+
+MLNX-OS 3.12 admin accounts are **CLI-only** and the `ib` keyword is the
+`ibdiagnet` wrapper (not a generic ibutils prefix), so per-switch `ib sminfo` /
+`ib ibnetdiscover` style queries do not work. LLDPq-IB therefore runs in a
+**UFM-backed hybrid** model:
+
+- **Fabric-wide data** (topology, Subnet Manager, links, P_Keys, transceivers,
+SHARP) comes from the **UFM REST API** (`ufm-adapter.py`, every 10 min).
+- **Switch-local data** (hardware power/fan/temp, running-config, logs) comes
+from **interactive enable-mode SSH** to each switch (`ib-hw-collect.sh`,
+`get-configs.sh`).
+
+Set `UFM_URL` + `UFM_USERNAME` + `UFM_PASSWORD` and the container auto-selects
+hybrid mode. `LLDPQ_DATA_SOURCE` (`ufm` | `hybrid` | `ssh`) overrides it.
 
 What works:
 
-- Full IB data collection pipeline (16 marker sections, 8 parsers, mock
-mode via `LLDPQ_IB_MOCK=1`).
-- 10 analysis pages (SM Status, P_Key, Multicast, QoS, SHARP, Link
-Errors, Search, Tracepath, Topology, Transceiver) driven by per-fabric
-IB JSON.
-- Fabric overview dashboard (IB-focused, replaces the Cumulus dashboard).
-- Ask AI (`ai.html` / `ai-api.sh`) -- IB-context system prompts +
-IB-specific prompt chips (SM, Links, P_Keys, Multicast, SHARP,
-Transceivers, Topology). Chat is disabled until an operator chooses a
-provider (Ollama / OpenAI / Claude / Gemini) in Settings.
-- Devices / Provision / Discover / DHCP / ZTP for MLNX-OS (Cumulus
-`sw-base`, NVUE deploy and `onie-install` paths are explicitly
-disabled in the IB edition; admins push MLNX-OS configs and images
-manually).
-- Optional UFM REST integration (alerts, system inventory, topology
-cross-check, BER history Chart.js). Set `UFM_URL` / `UFM_TOKEN` to
-enable.
-- IB-focused alert engine (`check_alerts.py`): SM master loss, link
-error severity, unreachable switches, hardware temp/fan.
-- **Demo dataset** baked into the image: launch with `LLDPQ_DEMO=true`
-and the container pre-populates a 4-spine + 8-leaf + 16-HCA fake fat-
-tree (NDR, SHARP enabled, realistic problem ports) so the UI is full
-the moment it opens. See "Demo mode" below.
+- SM Status, Link Errors, P_Key, Topology, Search, Tracepath, **Transceiver**,
+**Hardware**, **UFM Integration**, **Diagnostics (ibdiagnet)**, and **Logs
+(Fabric Events)** — all driven by live UFM + switch data.
+- Device Details: Overview, Ports, **Optical** (transceiver inventory),
+**Subnet Manager** (fabric SM status), **Logs** (live `show log matching`),
+Config, Command Runner.
+- IB Wiring validation (design `topology.dot` vs live topology) with
+click-to-filter summary cards and CSV export of problem rows.
+- Provision / Discover / DHCP / ZTP for MLNX-OS; SSH key push uses **RSA**
+(required by MLNX-OS 3.12).
+- Fabric Diagnostic: on-demand `ibdiagnet` with parse-then-discard retention;
+optional opt-in scheduling (`IBDIAGNET_SCHEDULE`).
+- Optional Ask AI (`ai.html`) — IB-context prompts; pick a provider in Settings.
+- IB-focused alert engine (`check_alerts.py`).
+- **Demo dataset** (`LLDPQ_DEMO=true`): a baked 4-spine + 8-leaf + 16-HCA fake
+NDR fat-tree so the UI is full with no real fabric. See "Demo mode" below.
 
-What is intentionally not in v0.4.0:
+Honest limitations on UFM 6.x REST (pages show a clear message, not an error):
 
-- Optical menu item is hidden (Transceiver page covers per-module
-health; BER history view is on the Telemetry page via Chart.js).
-- Device.html `Capture` and `cl-support` tabs are placeholders --
-MLNX-OS exposes `tcpdump` / `show tech-support` only via `_shell`,
-which is not whitelisted in `ib-api.sh`.
+- **Historical telemetry / BER trend** is not exposed over UFM REST on tested
+6.x deployments — the Telemetry "BER History" panel says so and points to the
+Link Errors page (current counters, collected every 10 min).
+- **Multicast** and **QoS / SL2VL** have no UFM REST resource — those pages say
+so and point to **Diagnostics → ibdiagnet** for on-demand data.
+- Device.html `Capture` / `cl-support` tabs are placeholders (MLNX-OS exposes
+those only via `_shell`, which is not whitelisted in `ib-api.sh`).
 
 See [.cursor/ROADMAP.md](./.cursor/ROADMAP.md) for the full plan and
 [.cursor/HANDOFF.md](./.cursor/HANDOFF.md) for the current open work list.
@@ -220,47 +232,72 @@ Roles: `switch`, `spine`, `leaf`, `core`, `border` (any tag you like).
 
 ### SSH Access
 
-LLDPq-IB connects to switches as `admin` (MLNX-OS default). Distribute the
-container's SSH public key to each switch:
+LLDPq-IB connects to switches as `admin` (MLNX-OS default) using an **RSA** key.
+MLNX-OS 3.12 rejects ed25519 keys, so use RSA. The easiest path is the **Setup**
+page ("Push SSH key to all switches"), which generates the key and installs it
+for you. Manual flow:
 
 ```bash
-# On the LLDPq-IB host:
-sudo docker exec lldpq-ib ssh-keygen -t ed25519 -N '' -f /home/lldpq/.ssh/id_ed25519
+# On the LLDPq-IB host (RSA, not ed25519):
+sudo docker exec lldpq-ib ssh-keygen -t rsa -b 4096 -N '' -f /home/lldpq/.ssh/id_rsa
 
 # Copy the public key (output of below) to each MLNX-OS switch:
-sudo docker exec lldpq-ib cat /home/lldpq/.ssh/id_ed25519.pub
+sudo docker exec lldpq-ib cat /home/lldpq/.ssh/id_rsa.pub
 
-# On MLNX-OS:
-switch (config) # ssh client user admin authorized-key sshv2 "ssh-ed25519 AAAA..."
+# On MLNX-OS (enable / configure terminal):
+switch (config) # ssh client user admin authorized-key sshv2 "ssh-rsa AAAA..."
+switch (config) # write memory
 ```
 
-### Optional: UFM Integration
+> MLNX-OS admin is **CLI-only**: LLDPq-IB never runs `ssh host "command"` (exec
+> mode is rejected). It opens an interactive enable-mode session and pipes
+> commands in.
 
-NVIDIA's Unified Fabric Manager (UFM) provides additional fabric-wide telemetry,
-alarms, and topology validation. LLDPq-IB can optionally consume UFM's REST API
-to enrich monitoring. **UFM is not required** -- LLDPq-IB works fully without it.
+### UFM Integration (primary data source for MLNX-OS NDR)
 
-When UFM is configured, the **UFM** sidebar entry shows:
+NVIDIA's Unified Fabric Manager (UFM) is the **authoritative fabric data source**
+for MLNX-OS NDR fabrics (where switches are CLI-only). Point LLDPq-IB at UFM and
+it runs in **hybrid mode**: UFM REST for fabric-wide data + switch SSH for
+hardware/logs/config.
 
-- Connection status + UFM version
-- Active alerts (with severity badges) -- you can filter and search
-- Topology cross-check (which GUIDs we see locally that UFM doesn't, and vice versa)
-
-To enable:
+Recommended run (matches a real UFM-appliance deployment):
 
 ```bash
 sudo docker run -d --name lldpq-ib \
   --network host --privileged \
-  -e UFM_URL=https://ufm.example.com/ufmRest \
-  -e UFM_TOKEN="$(echo -n 'admin:ufmpassword' | base64)" \
-  -e UFM_VERIFY_TLS=false \
+  -e LLDPQ_PORT=8090 \
+  -e UFM_URL=https://10.230.237.6 \
+  -e UFM_USERNAME=admin \
+  -e UFM_PASSWORD='123456' \
+  -v /root/lldpq-pre/ssh:/home/lldpq/.ssh-mount:ro \
+  -v /root/lldpq-pre/devices.yaml:/home/lldpq/lldpq/devices.yaml \
+  -v lldpq-ib-data:/home/lldpq/lldpq/monitor-results \
   lldpq-ib:latest
 ```
 
-- `UFM_URL` -- base REST URL (typically ends in `/ufmRest`). Required.
-- `UFM_TOKEN` -- base64-encoded `username:password` for HTTP Basic Auth. Required.
-- `UFM_VERIFY_TLS` -- `true` to verify the UFM TLS certificate, `false` (default)
-to accept self-signed certs.
+- `UFM_URL` -- base URL of the UFM GUI/REST host (e.g. `https://10.230.237.6`).
+  Do **not** append `/ufmRest`; the adapter adds the right prefix.
+- `UFM_USERNAME` + `UFM_PASSWORD` -- UFM credentials (or pass a pre-built
+  `UFM_TOKEN` = base64 `user:password`). Can also be set later from the **UFM**
+  page in the UI.
+- `UFM_VERIFY_TLS` -- `true` to verify the UFM cert, `false` (default) for
+  self-signed.
+- `LLDPQ_DATA_SOURCE` -- `hybrid` (auto when `UFM_URL` is set), `ufm` (no switch
+  SSH), or `ssh` (legacy).
+
+What UFM provides (UFM sidebar + Analysis pages): connection status + version,
+fabric **events/alerts** (also the **Logs** page), **systems/links** topology
+cross-check, per-port **transceiver/cable** inventory, P_Keys, and SHARP.
+
+What UFM 6.x REST does **not** expose (pages say so honestly): historical
+telemetry / BER trend, multicast groups, and QoS/SL2VL. Use **Diagnostics →
+ibdiagnet** for on-demand multicast/QoS/SL data; current BER/error counters are
+on the **Link Errors** page.
+
+> The `monitor-results` volume just caches the last generated data; it is **not**
+> required and is **not** a source of stale UI — `ufm-adapter.py` overwrites it
+> every 10 minutes. Removing it only means the pages are empty for one cron cycle
+> after a fresh start.
 
 ## Documentation
 

@@ -59,7 +59,10 @@ async function loadData() {
         render();
     } catch (e) {
         document.getElementById('profile-list').innerHTML =
-            '<div class="no-data"><h3>No QoS data yet</h3><p>Wait for the next monitor cycle.</p></div>';
+            '<div class="no-data"><h3>QoS data not collected</h3>' +
+            '<p>UFM REST does not expose a QoS / SL-to-VL resource on this fabric. ' +
+            'Run <code>ibdiagnet</code> on demand from the ' +
+            '<a href="/diagnostics.html" target="_top" style="color:#76b900;">Diagnostics</a> page to inspect SL2VL / QoS mappings.</p></div>';
     }
 }
 

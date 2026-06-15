@@ -372,6 +372,77 @@ def build_sharp(modules, by_guid):
     }
 
 
+def _vendor_from_pn(pn):
+    """Best-effort vendor from the transceiver part number prefix."""
+    p = (pn or "").upper()
+    if p.startswith(("MMA", "MFA", "MMS", "MCP", "MFS", "MC2", "MC4")):
+        return "NVIDIA"
+    return ""
+
+
+def build_transceiver(cable_ports, by_guid):
+    """transceiver_inventory.json from UFM's per-port cable_info.
+
+    Fed by `resources/ports?cable_info=true`. We keep switch-owned ports (the
+    switch's optics) so the Transceiver page and the Device Details > Optical tab
+    (which filters modules by switch hostname) light up. cable_info shape:
+      {technology, fw_version, serial_number, part_number, length, revision,
+       temperature, identifier}
+    """
+    modules = []
+    devices = set()
+    fw_by_model = {}
+    for p in cable_ports or []:
+        ci = p.get("cable_info")
+        if not ci or not isinstance(ci, dict):
+            continue
+        sg = norm_guid(p.get("system_guid"))
+        meta = by_guid.get(sg, {})
+        if meta.get("type") != "switch":
+            continue  # only switch transceivers (page shows switch optics)
+        device = meta.get("hostname") or p.get("system_name") or sg
+        port = (p.get("dname") or (str(p.get("number")) if p.get("number") not in (None, "") else "")
+                or p.get("name") or "")
+        pn = (ci.get("part_number") or "").strip()
+        fw = (ci.get("fw_version") or "").strip()
+        state = str(p.get("logical_state", "")).lower()
+        modules.append({
+            "device": device,
+            "port": port,
+            "part_number": pn,
+            "serial_number": (ci.get("serial_number") or "").strip(),
+            "fw_version": fw,
+            "identifier": (ci.get("identifier") or "").strip(),
+            "vendor": _vendor_from_pn(pn),
+            "temperature": (ci.get("temperature") or "").strip(),
+            "technology": (ci.get("technology") or "").strip(),
+            "length": (ci.get("length") or "").strip(),
+            "revision": (ci.get("revision") or "").strip(),
+            "health": "ok" if state in ("active", "") else "down",
+        })
+        if device:
+            devices.add(device)
+        if pn:
+            fw_by_model.setdefault(pn, set()).add(fw or "?")
+    models = sorted({m["part_number"] for m in modules if m["part_number"]})
+    mixed = sorted([pn for pn, fws in fw_by_model.items()
+                    if len([x for x in fws if x and x != "?"]) > 1])
+    fw_versions = {pn: sorted(fws) for pn, fws in fw_by_model.items()}
+    return {
+        "generated_at": now_iso(),
+        "last_update": now_iso(),
+        "source": "ufm",
+        "modules": sorted(modules, key=lambda m: (m["device"], m["port"])),
+        "summary": {
+            "total_modules": len(modules),
+            "unique_models": len(models),
+            "devices_with_modules": len(devices),
+            "mixed_fw_models": mixed,
+            "fw_versions": fw_versions,
+        },
+    }
+
+
 def build_assets_ini(by_guid, identity=None):
     """assets.ini from UFM inventory, enriched with switch-local identity
     (serial / MLNX-OS release / uptime) collected by ib-hw-collect.sh when
@@ -437,6 +508,7 @@ def main():
     systems = ufm.get("resources/systems") or []
     links = ufm.get("resources/links") or []
     ports = ufm.get("resources/ports") or []
+    cable_ports = ufm.get("resources/ports?cable_info=true&active=true") or []
     pkeys = ufm.get("resources/pkeys") or []
     modules = ufm.get("resources/modules") or []
 
@@ -449,6 +521,7 @@ def main():
         "ib_link_errors.json": build_link_errors(links, ports),
         "ib_pkey.json": build_pkey(ufm, pkeys, by_guid),
         "ib_sharp_status.json": build_sharp(modules, by_guid),
+        "transceiver_inventory.json": build_transceiver(cable_ports, by_guid),
     }
 
     results = args.results_dir

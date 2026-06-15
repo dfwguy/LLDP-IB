@@ -958,9 +958,8 @@
                 </div>
                 <div class="command-group-content">
                     <div class="command-buttons">
-                        <button class="cmd-btn" onclick="runCommand('ib sminfo')">ib sminfo</button>
+                        <button class="cmd-btn" onclick="runCommand('show ib sm')">show ib sm</button>
                         <button class="cmd-btn" onclick="runCommand('show ib smnodes')">show ib smnodes</button>
-                        <button class="cmd-btn" onclick="runCommand('ib ibswitches')">ib ibswitches</button>
                         <button class="cmd-btn" onclick="runCommand('ib ibhosts')">ib ibhosts</button>
                         <button class="cmd-btn" onclick="runCommand('ib ibnetdiscover -l')">ibnetdiscover -l (list)</button>
                         <button class="cmd-btn" onclick="runCommand('ib iblinkinfo --line')">iblinkinfo</button>
@@ -2834,25 +2833,47 @@
         }
         
         async function loadBGPForVRF() {
-            // Show Subnet Manager info. Function name is legacy because older
-            // tab-loading code calls it; the UI label is IB-specific.
+            // The IB Subnet Manager runs on the UFM appliance (not per-switch) in
+            // UFM-backed fabrics, and on MLNX-OS the 'ib sminfo' CLI maps to
+            // ibdiagnet (not a per-switch query). So show the fabric SM status
+            // from ib_sm_status.json -- identical for every switch.
             const target = document.getElementById('bgpContent');
             if (!target) return;
             target.innerHTML = '<div class="loading">Loading Subnet Manager info...</div>';
             try {
-                const response = await fetch('/ib-api.sh?action=run-device-command', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({device: deviceName, command: 'ib sminfo'})
-                });
-                const data = await response.json();
-                if (data.success) {
-                    target.innerHTML = `<pre style="font-size: 12px; overflow-x: auto;">${data.output}</pre>`;
-                } else {
-                    target.innerHTML = `<div class="error-message">${data.error}</div>`;
-                }
+                const resp = await fetch('/monitor-results/ib_sm_status.json', { cache: 'no-store' });
+                if (!resp.ok) throw new Error('SM status not collected yet');
+                const sm = await resp.json();
+                const sms = sm.sms || [];
+                const sum = sm.summary || {};
+                const rows = sms.map(s => {
+                    const st = (s.state || '').toLowerCase();
+                    const color = st === 'master' ? '#4caf50' : (st === 'standby' ? '#ff9800' : '#888');
+                    return `<tr>
+                        <td><strong>${escapeHtml(s.hostname || s.guid || '-')}</strong></td>
+                        <td style="color:${color};font-weight:600;">${escapeHtml(s.state || '-')}</td>
+                        <td>${s.priority != null ? s.priority : '-'}</td>
+                        <td>${s.lid || '-'}</td>
+                        <td>${escapeHtml(s.opensm || sm.opensm_version || '-')}</td>
+                    </tr>`;
+                }).join('');
+                target.innerHTML = `
+                    <div style="margin-bottom:10px;color:#888;font-size:12px;">
+                        Fabric Subnet Manager (source: ${escapeHtml(sm.source || 'ufm')}${sm.generated_at ? ' · ' + escapeHtml(sm.generated_at) : ''}).
+                        The SM is fabric-wide, so this view is the same for every switch.
+                    </div>
+                    <table class="data-table" style="width:100%;">
+                        <thead><tr><th>SM Host</th><th>State</th><th>Priority</th><th>LID</th><th>OpenSM</th></tr></thead>
+                        <tbody>${rows || '<tr><td colspan="5">No SM entries</td></tr>'}</tbody>
+                    </table>
+                    <div style="margin-top:10px;font-size:12px;color:#888;">
+                        Masters: ${sum.master_count != null ? sum.master_count : '-'} ·
+                        Standby: ${sum.standby_count != null ? sum.standby_count : '-'} ·
+                        Redundancy: ${sum.has_redundancy ? 'yes' : 'no'} ·
+                        Full fabric view: <a href="/sm-status.html" target="_top" style="color:#76b900;">SM Status page</a>
+                    </div>`;
             } catch (e) {
-                target.innerHTML = `<div class="error-message">${e.message}</div>`;
+                target.innerHTML = `<div class="error-message">${escapeHtml(e.message)} — see the <a href="/sm-status.html" target="_top" style="color:#76b900;">SM Status</a> page for fabric SM details.</div>`;
             }
         }
         
@@ -2942,10 +2963,11 @@
                     <tr>
                         <th>Port</th>
                         <th>Health</th>
-                        <th>RX Power (dBm)</th>
-                        <th>TX Power (dBm)</th>
-                        <th>Temperature (C)</th>
-                        <th>Link Margin (dB)</th>
+                        <th>Identifier</th>
+                        <th>Part Number</th>
+                        <th>Serial</th>
+                        <th>Firmware</th>
+                        <th>Temp</th>
                     </tr>
                 </thead>
                 <tbody>`;
@@ -2957,11 +2979,12 @@
                 const rowClass = o.health === 'down' ? 'clickable down-row' : 'clickable';
                 html += `<tr class="${rowClass}" onclick="showOpticalDetail('${o.port}')" id="optical-row-${o.port.replace(/[^a-zA-Z0-9]/g, '-')}">
                     <td><strong>${o.port}</strong></td>
-                    <td class="status-${o.health}">${o.health}</td>
-                    <td>${o.rx_power_dbm?.toFixed(2) || 'N/A'}</td>
-                    <td>${o.tx_power_dbm?.toFixed(2) || 'N/A'}</td>
-                    <td>${o.temperature_c?.toFixed(1) || 'N/A'}</td>
-                    <td>${o.link_margin_db?.toFixed(2) || 'N/A'}</td>
+                    <td class="status-${o.health}">${o.health || '-'}</td>
+                    <td>${o.identifier || '-'}</td>
+                    <td>${o.part_number || '-'}</td>
+                    <td>${o.serial_number || '-'}</td>
+                    <td>${o.fw_version || '-'}</td>
+                    <td>${o.temperature || '-'}</td>
                 </tr>`;
             });
             
@@ -3004,24 +3027,28 @@
         }
         
         function renderLogs(logs) {
+            // MLNX-OS has no periodic log summary file, so counts are loaded live
+            // when a severity is clicked (they start as "—").
             document.getElementById('logCards').innerHTML = `
                 <div class="summary-card log-card" onclick="showLogs('critical')" id="logCardCritical">
-                    <div class="value" style="color: #f44336">${logs.critical || 0}</div>
+                    <div class="value" style="color: #f44336">&mdash;</div>
                     <div class="label">Critical</div>
                 </div>
                 <div class="summary-card log-card" onclick="showLogs('error')" id="logCardError">
-                    <div class="value" style="color: #ff5722">${logs.error || 0}</div>
+                    <div class="value" style="color: #ff5722">&mdash;</div>
                     <div class="label">Error</div>
                 </div>
                 <div class="summary-card log-card" onclick="showLogs('warning')" id="logCardWarning">
-                    <div class="value" style="color: #ff9800">${logs.warning || 0}</div>
+                    <div class="value" style="color: #ff9800">&mdash;</div>
                     <div class="label">Warning</div>
                 </div>
                 <div class="summary-card log-card" onclick="showLogs('info')" id="logCardInfo">
-                    <div class="value" style="color: #4caf50">${logs.info || 0}</div>
+                    <div class="value" style="color: #4caf50">&mdash;</div>
                     <div class="label">Info</div>
                 </div>
             `;
+            const hint = document.getElementById('logHint');
+            if (hint) hint.textContent = 'Click a severity to load matching log lines live from the switch (show log matching ...).';
         }
         
         async function showLogs(severity) {
@@ -3044,7 +3071,9 @@
             };
 
             try {
-                const cmd = `show log matching ${matchMap[severity]} | tail -n 200`;
+                // MLNX-OS does NOT support shell pipes (`| tail`) -- "Command not
+                // filterable". Use the native regex match only.
+                const cmd = `show log matching ${matchMap[severity]}`;
                 const response = await fetch('/ib-api.sh?action=run-device-command', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -3053,7 +3082,12 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    logOutput.textContent = data.output || 'No logs found';
+                    const out = (data.output || '').trim();
+                    logOutput.textContent = out || 'No matching log lines';
+                    // Update the clicked card with the live line count.
+                    const lines = out ? out.split('\n').filter(l => l.trim()).length : 0;
+                    const valEl = document.querySelector('#logCard' + severity.charAt(0).toUpperCase() + severity.slice(1) + ' .value');
+                    if (valEl) valEl.textContent = lines;
                 } else {
                     logOutput.textContent = 'Error: ' + data.error;
                 }
