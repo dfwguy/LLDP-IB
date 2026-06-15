@@ -52,9 +52,20 @@ fetch_config() {
         echo "$device $hostname" >> "$unreachable_hosts_file"
         return 1
     fi
-    
-    if timeout 30 ssh $SSH_OPTS "${user}@${device}" "show running-config" \
-            2>/dev/null > "$TMP_BASE/${hostname}.txt"; then
+
+    # MLNX-OS admin is CLI-only: drive an interactive enable-mode session over a
+    # PTY (stdin) rather than `ssh host "show running-config"` (exec is rejected).
+    # Strip the login banner + prompt/echo lines so the saved file is clean config.
+    if printf 'enable\nno cli session paging enable\nshow running-config\nexit\nexit\n' \
+            | timeout 40 ssh -tt $SSH_OPTS "${user}@${device}" 2>/dev/null \
+            | tr -d '\r' \
+            | sed -e '/\[standalone:/d' -e '/\[master\]/d' \
+                  -e '/^NVIDIA Switch$/d' -e '/^NVIDIA MLNX-OS/d' \
+                  -e '/^Last login/d' -e '/^Last failed login/d' \
+                  -e '/^There w/d' -e '/^Number of total/d' -e '/^Connection to /d' \
+                  -e '/^enable$/d' -e '/^no cli session paging enable$/d' \
+                  -e '/^show running-config$/d' -e '/^exit$/d' \
+            > "$TMP_BASE/${hostname}.txt" && [ -s "$TMP_BASE/${hostname}.txt" ]; then
         echo "Config pulled: $hostname"
     else
         rm -f "$TMP_BASE/${hostname}.txt"

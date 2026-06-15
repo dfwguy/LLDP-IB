@@ -51,9 +51,9 @@ probe_device() {
             out=""
         fi
     else
-        out=$(timeout 15 ssh $SSH_OPTS "$user@$device" \
-            'show version 2>/dev/null; echo "---SEP---"; show inventory 2>/dev/null' \
-            2>/dev/null)
+        # MLNX-OS admin is CLI-only: interactive enable-mode over a PTY, not exec.
+        out=$(printf 'enable\nno cli session paging enable\nshow version\nshow inventory\nexit\nexit\n' \
+            | timeout 20 ssh -tt $SSH_OPTS "$user@$device" 2>/dev/null | tr -d '\r')
     fi
     
     if [ -z "$out" ]; then
@@ -77,7 +77,9 @@ probe_device() {
     product_name=$(echo "$out" | grep -m1 -iE '^[[:space:]]*Product name' | awk -F':' '{print $2}' | xargs)
     serial=$(echo "$out" | grep -m1 -iE '^[[:space:]]*System serial num' | awk -F':' '{print $2}' | xargs)
     uptime=$(echo "$out" | grep -m1 -iE '^[[:space:]]*Uptime' | awk -F':' '{print $2}' | xargs)
-    model=$(echo "$out" | grep -m1 -iE 'CHASSIS|System type|Model' | awk -F':' '{print $2}' | xargs)
+    # CHASSIS row is space-separated ("CHASSIS  MQM9700-NS2F  <serial> ..."); take col 2.
+    model=$(echo "$out" | awk '/^[[:space:]]*CHASSIS[[:space:]]/{print $2; exit}')
+    [ -z "$model" ] && model=$(echo "$out" | grep -m1 -iE '^[[:space:]]*Product model' | awk -F':' '{print $2}' | xargs)
     
     # Defaults
     release="${release:-unknown}"

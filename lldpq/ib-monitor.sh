@@ -16,6 +16,22 @@ eval "$(python3 "$SCRIPT_DIR/parse_devices.py")"
 source /etc/lldpq.conf 2>/dev/null || true
 WEB_ROOT="${WEB_ROOT:-/var/www/html}"
 
+# ── Data-source guard (LEGACY SSH/shell collector) ──────────────────────────
+# This collector sends a marker-based SHELL script over `ssh host "<script>"`
+# (exec) and uses `ib <util>` ibutils. That model only works on shell-capable
+# switches. CLI-only MLNX-OS admin accounts reject exec ("UNIX shell commands
+# cannot be executed") and have no `ib*` utilities (the `ib` keyword is an
+# ibdiagnet wrapper). For those fabrics, fabric data comes from ufm-adapter.py
+# (UFM REST) and switch hardware from ib-hw-collect.sh. Refuse to run in
+# ufm/hybrid mode so this cannot overwrite UFM-sourced JSON with empties.
+DATA_SOURCE="${LLDPQ_DATA_SOURCE:-auto}"
+if [ "$DATA_SOURCE" = "auto" ] && [ -n "${UFM_URL:-}" ]; then DATA_SOURCE="hybrid"; fi
+if [ "$DATA_SOURCE" = "ufm" ] || [ "$DATA_SOURCE" = "hybrid" ]; then
+    echo "ib-monitor.sh: skipped (LLDPQ_DATA_SOURCE=$DATA_SOURCE). Fabric data is" \
+         "collected by ufm-adapter.py (UFM REST) + ib-hw-collect.sh (switch HW)."
+    exit 0
+fi
+
 # === TUNING PARAMETERS ===
 MAX_PARALLEL="${MONITOR_MAX_PARALLEL:-${MAX_PARALLEL:-100}}"
 case "$MAX_PARALLEL" in

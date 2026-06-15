@@ -128,15 +128,19 @@
             <h3>Manual single command</h3>
             <label style="font-size:12px;color:#aaa;">Target switch</label>
             <select id="device"></select>
-            <h3>Safe presets</h3>
-            <button class="preset" onclick="runPreset('ib sminfo')">SM info (<code>ib sminfo</code>)</button>
-            <button class="preset" onclick="runPreset('ib iblinkinfo --line')">Link info (<code>iblinkinfo --line</code>)</button>
-            <button class="preset" onclick="runPreset('ib ibqueryerrors --details')">Query errors (<code>ibqueryerrors --details</code>)</button>
-            <button class="preset" onclick="runPreset('ib saquery -m')">Multicast groups (<code>saquery -m</code>)</button>
-            <button class="preset" onclick="runPreset('ib ibnetdiscover -p')">Topology dump (<code>ibnetdiscover -p</code>)</button>
-            <button class="preset danger" onclick="runDanger('ib ibroute')">LFT/MFT dump (<code>ibroute</code>)</button>
-            <div class="alert-box alert-warning" style="margin-top:12px;font-size:12px;">
-                <strong>Manual only:</strong> heavy commands like <code>ibroute</code> can produce MBs per switch. Use them for TAC/debug, never cron.
+            <h3>Safe presets (switch CLI)</h3>
+            <button class="preset" onclick="runPreset('show version')">Version (<code>show version</code>)</button>
+            <button class="preset" onclick="runPreset('show inventory')">Inventory (<code>show inventory</code>)</button>
+            <button class="preset" onclick="runPreset('show interfaces ib status')">IB port status (<code>show interfaces ib status</code>)</button>
+            <button class="preset" onclick="runPreset('show interfaces ib link-diagnostics')">Link diagnostics (<code>show interfaces ib link-diagnostics</code>)</button>
+            <button class="preset" onclick="runPreset('show ib partition')">Partitions (<code>show ib partition</code>)</button>
+            <button class="preset" onclick="runPreset('show power')">Power (<code>show power</code>)</button>
+            <button class="preset" onclick="runPreset('show temperature')">Temperature (<code>show temperature</code>)</button>
+            <button class="preset" onclick="runPreset('show log files')">Logs (<code>show log files</code>)</button>
+            <div class="alert-box alert-info" style="margin-top:12px;font-size:12px;">
+                Fabric-wide diagnostics (ibnetdiscover, sminfo, routing, BER) come from <strong>UFM</strong> and the
+                <strong>Fabric Diagnostic (ibdiagnet)</strong> builder above. On MLNX-OS the switch CLI is CLI-only and
+                does not expose individual <code>ib*</code> utilities (the <code>ib</code> keyword is an ibdiagnet wrapper).
             </div>
         </div>
 

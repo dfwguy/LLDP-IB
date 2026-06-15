@@ -404,6 +404,14 @@ PYTHON_END
     # Body: JSON { src_guid: "0x...", dst_guid: "0x..." }
     # -------------------------------------------------------------------
     ibtracert)
+        read -r POST_DATA 2>/dev/null || true
+        # Live ibtracert needs switch-side ib* utilities, which CLI-only MLNX-OS
+        # does NOT expose (the `ib` keyword is an ibdiagnet wrapper, and SSH exec
+        # is rejected). The Tracepath UI falls back to topology BFS on this reply.
+        echo '{"success": false, "error": "Live ibtracert is unavailable on CLI-only MLNX-OS switches; using topology BFS instead. For live routing run the Fabric Diagnostic (ibdiagnet) on the UFM appliance."}'
+        ;;
+
+    ibtracert-legacy-disabled)
         read -r POST_DATA
         export POST_DATA
         python3 << 'PYTHON_END'
