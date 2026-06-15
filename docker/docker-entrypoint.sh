@@ -233,7 +233,7 @@ elif [ "$DATA_SOURCE" = "ufm" ] || [ "$DATA_SOURCE" = "hybrid" ]; then
     fi
     cat > /etc/cron.d/lldpq << CRON
 # LLDPq-IB ${DATA_SOURCE} mode -- fabric data from UFM REST
-*/10 * * * * lldpq cd /home/lldpq/lldpq && python3 ufm-adapter.py >/dev/null 2>&1 && python3 generate_ib_topology.py >/dev/null 2>&1
+*/10 * * * * lldpq cd /home/lldpq/lldpq && python3 ufm-adapter.py >/dev/null 2>&1 ; python3 generate_ib_topology.py >/dev/null 2>&1 ; sudo /home/lldpq/lldpq/ib-local-scan.sh >/dev/null 2>&1
 ${HW_LINE}
 * * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
 0 */6 * * * lldpq cd /home/lldpq/lldpq && bash get-configs.sh > /dev/null 2>&1

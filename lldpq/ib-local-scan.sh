@@ -101,9 +101,77 @@ for ln in qe.splitlines():
                 "counters": counters,
             })
 
+gen_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+mr_dir = os.path.dirname(outjson)
+
+# --- Feed REAL per-port error counters into ib_link_errors.json as DELTAS -----
+# ibqueryerrors reports cumulative counters (a 200-day-up switch has huge totals
+# that are not current faults). We diff against the previous baseline so the Link
+# Errors page shows only ACTIVELY incrementing counters. First run = baseline only.
+state_path = os.path.join(mr_dir, "ib_counter_state.json")
+try:
+    prev = (json.load(open(state_path)) or {}).get("ports", {})
+except Exception:
+    prev = {}
+first_run = not prev
+
+def severity_of(d):
+    ld = d.get("LinkDownedCounter", 0); se = d.get("SymbolErrorCounter", 0)
+    rcv = d.get("PortRcvErrors", 0); ler = d.get("LinkErrorRecoveryCounter", 0)
+    xd = d.get("PortXmitDiscards", 0)
+    if ld >= 5 or se >= 1000:
+        return "critical"
+    if ld > 0 or se > 0 or rcv > 0 or ler > 0 or xd >= 100:
+        return "warning"
+    return None
+
+new_state = {}
+problem_ports = []
+for e in err_ports:
+    if e["port"] == "ALL":
+        continue  # node aggregate row, not a per-port sample
+    key = f'{e["guid"]}:{e["port"]}'
+    cur = e["counters"]
+    new_state[key] = cur
+    if first_run or key not in prev:
+        continue  # establish baseline; don't flag pre-existing cumulative errors
+    delta = {c: cur[c] - prev[key].get(c, 0) for c in cur if cur[c] - prev[key].get(c, 0) > 0}
+    if not delta:
+        continue
+    sev = severity_of(delta)
+    if not sev:
+        continue
+    problem_ports.append({
+        "device": e["device"], "port": e["port"], "guid": e["guid"],
+        "severity": sev, "delta": delta,
+        "flaps_1h": delta.get("LinkDownedCounter", 0), "flaps_24h": 0,
+        "note": "live ibqueryerrors delta",
+    })
+
+crit = sum(1 for p in problem_ports if p["severity"] == "critical")
+warn = sum(1 for p in problem_ports if p["severity"] == "warning")
+flapping = sum(1 for p in problem_ports if p.get("flaps_1h", 0) > 0)
+link_errors = {
+    "generated_at": gen_at, "last_update": gen_at,
+    "source": "container-local-ibutils",
+    "total_ports_monitored": links,
+    "problem_ports": problem_ports,
+    "summary": {
+        "critical_count": crit, "warning_count": warn,
+        "critical": crit, "warning": warn,
+        "flapping_1h": flapping, "total_ports": links,
+        "first_baseline": first_run,
+    },
+}
+try:
+    json.dump(link_errors, open(os.path.join(mr_dir, "ib_link_errors.json"), "w"), indent=2)
+    json.dump({"generated_at": gen_at, "ports": new_state}, open(state_path, "w"), indent=2)
+except Exception:
+    pass
+
 out = {
     "success": True,
-    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "generated_at": gen_at,
     "source": "container-local-ibutils",
     "summary": {
         "switches": switches,
@@ -111,6 +179,8 @@ out = {
         "links": links,
         "down_links": len(down_links),
         "ports_with_errors": len([e for e in err_ports if e["port"] != "ALL"]),
+        "active_error_ports": len(problem_ports),
+        "baseline": first_run,
         "sm": sm,
     },
     "sm_info": sm,
