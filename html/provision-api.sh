@@ -1082,46 +1082,42 @@ def action_subnet_scan():
         base_deployed is always False on the IB edition (no sw-base marker).
         """
         try:
+            # MLNX-OS admin is CLI-only: exec (`ssh host "show inventory"`) is
+            # rejected ("UNIX shell commands cannot be executed"), so drive an
+            # interactive enable-mode session over a PTY and feed commands on stdin.
             r = subprocess.run(
-                ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=3',
+                ['sudo', '-u', LLDPQ_USER, 'timeout', '16', 'ssh', '-tt',
+                 '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6',
                  '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-                 '-o', 'LogLevel=ERROR', f'admin@{ip}',
-                 # `show inventory` works at the un-enabled CLI on MLNX-OS and
-                 # returns a table whose first data row contains the chassis SN.
-                 'show inventory'],
-                capture_output=True, text=True, timeout=10
+                 '-o', 'LogLevel=ERROR', f'admin@{ip}'],
+                input='enable\nno cli session paging enable\nshow inventory\nexit\nexit\n',
+                capture_output=True, text=True, timeout=22
             )
-            if r.returncode == 0 and r.stdout.strip():
-                out = r.stdout
-                # MLNX-OS `show inventory` output marker -- the column header
-                # always contains "Product Name" and "Serial Number".
-                looks_like_mlnx = (
-                    'Serial Number' in out
-                    or 'Product Name' in out
-                    or 'MLNX-OS' in out
-                )
-                serial = ''
-                for line in out.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith('-') or 'Module' in line or 'Serial' in line:
-                        continue
-                    parts = line.split()
-                    # Heuristic: MLNX serial numbers look like MT1234X12345 (12+ chars)
-                    for tok in parts:
-                        if len(tok) >= 10 and tok[0:2].isalpha() and any(c.isdigit() for c in tok):
-                            serial = tok
-                            break
-                    if serial:
-                        break
-                if looks_like_mlnx or serial:
-                    return ip, 'provisioned', serial, False
-                return ip, 'other', '', False
-            stderr = (r.stderr or '').lower()
-            if 'permission denied' in stderr:
+            out = r.stdout or ''
+            combined = (out + ' ' + (r.stderr or '')).lower()
+            # Key auth refused -> default creds still in place / key not installed.
+            if 'permission denied' in combined:
                 return ip, 'not_provisioned', '', False
-            if 'connection refused' in stderr or 'no route to host' in stderr:
+            if 'connection refused' in combined or 'no route to host' in combined:
                 return ip, 'other', '', False
-            return ip, 'not_provisioned', '', False
+            looks_like_mlnx = (
+                'serial number' in combined or 'chassis' in combined
+                or 'mlnx-os' in combined or 'product release' in combined
+            )
+            # MLNX-OS chassis serial is the MT-prefixed token on the CHASSIS row.
+            serial = ''
+            for line in out.splitlines():
+                for tok in line.split():
+                    if tok.startswith('MT') and len(tok) >= 10 and any(c.isdigit() for c in tok):
+                        serial = tok
+                        break
+                if serial:
+                    break
+            # Key auth succeeded (no permission-denied) -> the switch is reachable
+            # by the collector key = provisioned.
+            if looks_like_mlnx or serial or r.returncode == 0:
+                return ip, 'provisioned', serial, False
+            return ip, 'other', '', False
         except subprocess.TimeoutExpired:
             return ip, 'other', '', False
         except Exception:
