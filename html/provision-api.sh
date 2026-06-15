@@ -2234,7 +2234,9 @@ def action_get_ssh_key():
 def action_generate_ssh_key():
     home = os.path.expanduser(f'~{LLDPQ_USER}')
     ssh_dir = os.path.join(home, '.ssh')
-    key_path = os.path.join(ssh_dir, 'id_ed25519')
+    # RSA, not ed25519: MLNX-OS "authorized-key sshv2" honors RSA reliably but
+    # rejects ed25519 on some versions (push "succeeds" yet key auth still fails).
+    key_path = os.path.join(ssh_dir, 'id_rsa')
     pub_path = key_path + '.pub'
     
     try:
@@ -2242,7 +2244,7 @@ def action_generate_ssh_key():
         tmp_key = '/tmp/.lldpq-keygen-tmp'
         subprocess.run(['/usr/bin/rm', '-f', tmp_key, tmp_key + '.pub'], capture_output=True, timeout=5)
         result = subprocess.run(
-            ['/usr/bin/ssh-keygen', '-t', 'ed25519', '-N', '', '-f', tmp_key, '-C', f'lldpq@provision'],
+            ['/usr/bin/ssh-keygen', '-t', 'rsa', '-b', '2048', '-N', '', '-f', tmp_key, '-C', f'lldpq@provision'],
             capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
             error_json(f'ssh-keygen failed: {result.stderr}')
@@ -2267,7 +2269,7 @@ def action_generate_ssh_key():
         subprocess.run(['sudo', '-n', '/usr/bin/chmod', '600', key_path], capture_output=True, timeout=5)
         subprocess.run(['sudo', '-n', '/usr/bin/chmod', '644', pub_path], capture_output=True, timeout=5)
         
-        result_json({"success": True, "public_key": pub_content.strip(), "key_type": "ed25519", "key_file": pub_path})
+        result_json({"success": True, "public_key": pub_content.strip(), "key_type": "rsa", "key_file": pub_path})
     except Exception as e:
         error_json(str(e))
 

@@ -53,9 +53,11 @@ if yaml and os.path.exists(devices_path):
         pass
 
 home = os.path.expanduser(f'~{user}')
+# Prefer RSA: MLNX-OS authorized-key sshv2 honors RSA; ed25519 is not accepted on
+# some versions. Show/push the RSA key so manual paste + auto-push both work.
 pub_candidates = [
-    os.path.join(home, '.ssh', 'id_ed25519.pub'),
     os.path.join(home, '.ssh', 'id_rsa.pub'),
+    os.path.join(home, '.ssh', 'id_ed25519.pub'),
 ]
 ssh_pub = ''
 key_file = ''
@@ -108,95 +110,37 @@ PY
 
     push-ssh-key)
         # POST { "password": "<switch admin password>" }
-        # Authorizes the collector's PUBLIC key on every switch in devices.yaml
-        # using the interactive enable-mode CLI (MLNX-OS admin is CLI-only, so
-        # exec/`ssh host "cmd"` is rejected). Runs the push as www-data via
-        # sshpass (password auth, no key needed) and verifies key auth as lldpq.
+        # Authorizes the collector key on every switch in devices.yaml. The push
+        # itself is done by send-key.sh running AS lldpq (sudo) -- MLNX-OS admin
+        # is CLI-only so send-key.sh drives an interactive enable-mode session,
+        # and running as lldpq means it uses the collector key + sshpass reliably.
         if [ "${LLDPQ_DEMO:-false}" = "true" ]; then
             echo '{"success": false, "error": "SSH key push is disabled in LLDPQ_DEMO=true mode."}'
             exit 0
         fi
         read -r POST_DATA
-        export POST_DATA LLDPQ_DIR LLDPQ_USER
+        PW=$(printf '%s' "$POST_DATA" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("password",""))' 2>/dev/null)
+        if [ -z "$PW" ]; then
+            echo '{"success": false, "error": "Switch admin password is required."}'
+            exit 0
+        fi
+        OUT=$(sudo -u "$LLDPQ_USER" -H "$LLDPQ_DIR/send-key.sh" -p "$PW" 2>&1)
+        export OUT
         python3 <<'PY'
-import json, os, subprocess
-from concurrent.futures import ThreadPoolExecutor
-
-try:
-    body = json.loads(os.environ.get('POST_DATA') or '{}')
-except Exception:
-    body = {}
-password = body.get('password', '')
-if not password:
-    print(json.dumps({'success': False, 'error': 'Switch admin password is required.'}))
-    raise SystemExit
-
-lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
-user = os.environ.get('LLDPQ_USER', 'lldpq')
-
-# Collector public + private key (read pub as lldpq via the allowed sudo cat).
-pub, priv = '', ''
-for base in ('id_ed25519', 'id_rsa'):
-    p = f'/home/{user}/.ssh/{base}.pub'
-    r = subprocess.run(['sudo', '-u', user, 'cat', p], capture_output=True, text=True)
-    if r.returncode == 0 and r.stdout.strip():
-        pub, priv = r.stdout.strip(), f'/home/{user}/.ssh/{base}'
-        break
-if not pub:
-    print(json.dumps({'success': False, 'error': 'No collector SSH key yet. Click "Generate key" first.'}))
-    raise SystemExit
-
-try:
-    import yaml
-    data = yaml.safe_load(open(os.path.join(lldpq_dir, 'devices.yaml'))) or {}
-except Exception as e:
-    print(json.dumps({'success': False, 'error': f'Cannot read devices.yaml: {e}'}))
-    raise SystemExit
-
-defaults = data.get('defaults', {})
-duser = defaults.get('username', 'admin')
-devs = []
-for ip, val in (data.get('devices') or {}).items():
-    if isinstance(val, str):
-        parts = val.strip().split()
-        host = parts[0] if parts else ip
-        u = duser
-    elif isinstance(val, dict):
-        host = val.get('hostname', ip)
-        u = val.get('username', duser)
-    else:
-        continue
-    devs.append((ip, u, host))
-
-def push(dev):
-    ip, u, host = dev
-    cli = (f'enable\nconfigure terminal\n'
-           f'ssh client user {u} authorized-key sshv2 "{pub}"\n'
-           f'write memory\nexit\nexit\n')
-    # Push (password auth via sshpass -e; SSHPASS keeps it out of argv).
-    subprocess.run(
-        ['timeout', '35', 'sshpass', '-e', 'ssh', '-tt',
-         '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
-         '-o', 'PubkeyAuthentication=no',
-         '-o', 'PreferredAuthentications=keyboard-interactive,password',
-         '-o', 'ConnectTimeout=10', '-o', 'LogLevel=ERROR', f'{u}@{ip}'],
-        input=cli, capture_output=True, text=True,
-        env={**os.environ, 'SSHPASS': password})
-    # Verify key auth now works (as lldpq, using its private key).
-    v = subprocess.run(
-        ['sudo', '-u', user, 'timeout', '15', 'ssh', '-i', priv, '-tt',
-         '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
-         '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10',
-         '-o', 'LogLevel=ERROR', f'{u}@{ip}'],
-        input='exit\n', capture_output=True, text=True)
-    ok = v.returncode == 0 and 'Permission denied' not in (v.stdout + v.stderr)
-    return {'host': host, 'ip': ip, 'ok': ok}
-
-results = sorted(ThreadPoolExecutor(max_workers=10).map(push, devs),
-                 key=lambda r: r['host'])
+import os, json, re
+out = os.environ.get('OUT', '')
+results = []
+for m in re.finditer(r'\[(OK|FAIL)\]\s+(\S+)\s+\(([^)]+)\)', out):
+    results.append({'host': m.group(2), 'ip': m.group(3), 'ok': m.group(1) == 'OK'})
 ok = sum(1 for r in results if r['ok'])
-print(json.dumps({'success': True, 'results': results,
-                  'ok_count': ok, 'fail_count': len(results) - ok, 'total': len(results)}))
+if not results:
+    print(json.dumps({'success': False,
+                      'error': 'send-key.sh produced no results',
+                      'raw': out[-600:]}))
+else:
+    print(json.dumps({'success': True, 'results': results,
+                      'ok_count': ok, 'fail_count': len(results) - ok,
+                      'total': len(results)}))
 PY
         ;;
 

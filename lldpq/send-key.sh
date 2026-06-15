@@ -18,7 +18,10 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 eval "$(python3 "$SCRIPT_DIR/parse_devices.py")"
 
 DEFAULT_SSH_KEY=""
-for key in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do
+# Prefer RSA: MLNX-OS "ssh client user ... authorized-key sshv2" honors RSA keys
+# reliably; ed25519 is NOT accepted on some MLNX-OS versions (key pushes "succeed"
+# but auth still fails). Fall back to ed25519 only if no RSA key exists.
+for key in "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ed25519.pub"; do
     if [ -f "$key" ]; then
         DEFAULT_SSH_KEY="$key"
         break
