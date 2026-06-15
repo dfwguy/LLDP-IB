@@ -16,7 +16,12 @@
 LLDPQ_GUARD_SESSIONS_DIR="/var/lib/lldpq/sessions"
 
 _guard_get_cookie() {
-    echo "$HTTP_COOKIE" | tr ';' '\n' | grep "lldpq_session=" | cut -d'=' -f2 | tr -d ' '
+    # Tolerate an unset HTTP_COOKIE (no Cookie header). Callers may run under
+    # `set -u`, where a bare $HTTP_COOKIE reference would abort the script with
+    # no output -> the CGI returns nothing -> nginx surfaces a cryptic
+    # "An error occurred while reading CGI reply". The :- default avoids that and
+    # lets us return a clean 401 instead.
+    echo "${HTTP_COOKIE:-}" | tr ';' '\n' | grep "lldpq_session=" | cut -d'=' -f2 | tr -d ' '
 }
 
 _guard_deny() {

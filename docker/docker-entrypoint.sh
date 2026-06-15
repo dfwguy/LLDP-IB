@@ -233,6 +233,7 @@ elif [ "$DATA_SOURCE" = "ufm" ] || [ "$DATA_SOURCE" = "hybrid" ]; then
 */10 * * * * lldpq cd /home/lldpq/lldpq && python3 ufm-adapter.py > /dev/null 2>&1
 ${HW_LINE}
 * * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
+0 */6 * * * lldpq cd /home/lldpq/lldpq && bash get-configs.sh > /dev/null 2>&1
 CRON
     chmod 644 /etc/cron.d/lldpq
     echo "  ✓ Cron: ${DATA_SOURCE} mode (UFM adapter every 10m$([ "$DATA_SOURCE" = "hybrid" ] && echo ' + switch HW every 15m'))"

@@ -2955,7 +2955,7 @@ function renderDiscovered() {
         if (d.post_provision === 'deployed') ppBadge = '<span class="badge badge-match" style="font-size:10px;">Just Now</span>';
         else if (d.post_provision === 'already') ppBadge = '<span class="badge" style="font-size:10px;background:rgba(100,100,100,0.2);color:#aaa;">Yes</span>';
         else if (d.post_provision === 'failed') ppBadge = '<span class="badge badge-error" style="font-size:10px;">Failed</span>';
-        else if (d.device_type === 'provisioned') ppBadge = '<span class="badge" style="font-size:10px;background:rgba(255,152,0,0.15);color:#ff9800;">Pending</span>';
+        else if (d.device_type === 'provisioned') ppBadge = '<span class="badge badge-match" style="font-size:10px;" title="Provisioned and reachable by the collector key; no ZTP/post-provision action needed.">OK</span>';
         else if (d.device_type === 'not_provisioned') ppBadge = 'No SSH';
         else if (d.device_type === 'unreachable') ppBadge = '-';
         

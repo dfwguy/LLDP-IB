@@ -1236,26 +1236,34 @@ def action_subnet_scan():
             and e['has_binding']
             and e['hostname']
             and e['post_provision'] != 'already'
+            # Skip switches whose live hostname already matches the desired one:
+            # already deployed -> no reconfig, no needless (and previously failing)
+            # post-provision attempt.
+            and probe_host.get(e['ip'], '').lower() != e['hostname'].lower()
         ]
 
         def post_provision_one(entry):
             ip = entry['ip']
             hostname = entry['hostname']
-            # MLNX-OS hostname set via CLI enable + configure terminal.
-            # `cli` is a non-interactive wrapper that takes multiple commands.
-            remote_cmd = (
-                f'cli enable "configure terminal" '
-                f'"hostname {hostname}" "write memory" "exit" 2>/dev/null'
-            )
+            # Only safe hostnames (the binding value flows into a CLI command).
+            if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$', hostname):
+                return ip, 'failed'
+            # MLNX-OS is CLI-only: set the hostname over an interactive enable-mode
+            # PTY session. `ssh host "cli enable ..."` (exec) is rejected.
+            cli = (f'enable\nconfigure terminal\nhostname {hostname}\n'
+                   f'write memory\nexit\nexit\n')
             try:
                 r = subprocess.run(
-                    ['sudo', '-u', LLDPQ_USER, 'ssh', '-o', 'BatchMode=yes',
-                     '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
-                     '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR',
-                     f'admin@{ip}', remote_cmd],
-                    capture_output=True, text=True, timeout=20
+                    ['sudo', '-u', LLDPQ_USER, 'timeout', '25', 'ssh', '-tt',
+                     '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6',
+                     '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
+                     '-o', 'LogLevel=ERROR', f'admin@{ip}'],
+                    input=cli, capture_output=True, text=True, timeout=30
                 )
-                return ip, 'deployed' if r.returncode == 0 else 'failed'
+                out = ((r.stdout or '') + (r.stderr or '')).lower()
+                if 'permission denied' in out or '% ' in out:
+                    return ip, 'failed'
+                return ip, 'deployed'
             except Exception:
                 return ip, 'failed'
 
