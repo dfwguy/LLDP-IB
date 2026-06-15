@@ -24,6 +24,7 @@ Copyright (c) 2024-2026 LLDPq Project - Licensed under MIT License
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -490,18 +491,24 @@ def build_transceiver(cable_ports, by_guid):
         pn = (ci.get("part_number") or "").strip()
         fw = (ci.get("fw_version") or "").strip()
         state = str(p.get("logical_state", "")).lower()
+        serial = (ci.get("serial_number") or "").strip()
+        rev = (ci.get("revision") or "").strip()
         modules.append({
             "device": device,
             "port": port,
             "part_number": pn,
-            "serial_number": (ci.get("serial_number") or "").strip(),
+            # transceiver.html reads m.serial / m.vendor_rev; get-device-data
+            # (Optical tab) reads m.serial_number -- provide both spellings.
+            "serial": serial,
+            "serial_number": serial,
             "fw_version": fw,
             "identifier": (ci.get("identifier") or "").strip(),
             "vendor": _vendor_from_pn(pn),
+            "vendor_rev": rev,
+            "revision": rev,
             "temperature": (ci.get("temperature") or "").strip(),
             "technology": (ci.get("technology") or "").strip(),
             "length": (ci.get("length") or "").strip(),
-            "revision": (ci.get("revision") or "").strip(),
             "health": "ok" if state in ("active", "") else "down",
         })
         if device:
@@ -640,6 +647,38 @@ def main():
                     dst.write(src.read())
             except Exception:
                 pass
+
+    # Archive snapshot: combined point-in-time JSON for the Discovery Archive page
+    # (/monitor-results/snapshots/, served via nginx autoindex). Keep newest 50.
+    try:
+        snap_dir = os.path.join(web_mr, "snapshots")
+        os.makedirs(snap_dir, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        log_summary = None
+        try:
+            with open(os.path.join(results, "ib_logs_summary.json")) as f:
+                log_summary = json.load(f)
+        except Exception:
+            log_summary = None
+        snap = {
+            "generated_at": now_iso(),
+            "ib_topology": bundles["ib_topology.json"],
+            "ib_sm_status": bundles["ib_sm_status.json"],
+            "ib_link_errors": bundles["ib_link_errors.json"],
+            "ib_pkey": bundles["ib_pkey.json"],
+            "ib_sharp_status": bundles["ib_sharp_status.json"],
+            "transceiver_inventory": bundles["transceiver_inventory.json"],
+            "log_summary": log_summary,
+        }
+        with open(os.path.join(snap_dir, f"lldpq-ib-{ts}.json"), "w") as f:
+            json.dump(snap, f, separators=(",", ":"))
+        for old in sorted(glob.glob(os.path.join(snap_dir, "lldpq-ib-*.json")))[:-50]:
+            try:
+                os.remove(old)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     topo = bundles["ib_topology.json"]["summary"]
     le = bundles["ib_link_errors.json"]["summary"]

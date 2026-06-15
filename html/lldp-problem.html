@@ -17,8 +17,9 @@
 
     <div id="banner"></div>
 
-    <div class="summary-grid">
+    <div class="summary-grid" style="grid-template-columns: repeat(5, 1fr);">
         <div class="summary-card card-warning"><div class="card-value" id="unreachable-count">-</div><div class="card-label">Unreachable Devices</div></div>
+        <div class="summary-card card-danger"><div class="card-value" id="wiring-mismatches">-</div><div class="card-label">Wiring Mismatches</div></div>
         <div class="summary-card card-danger"><div class="card-value" id="critical-links">-</div><div class="card-label">Critical Links</div></div>
         <div class="summary-card card-warning"><div class="card-value" id="warning-links">-</div><div class="card-label">Warning Links</div></div>
         <div class="summary-card card-info"><div class="card-value" id="orphan-nodes">-</div><div class="card-label">Orphan Nodes</div></div>
@@ -31,6 +32,14 @@
             <tbody id="unreachable-table">
                 <tr><td colspan="3"><div class="loading"><div class="spinner"></div>Loading...</div></td></tr>
             </tbody>
+        </table>
+    </div>
+
+    <h3 style="margin-bottom: 12px; color: #ef5350;">Wiring Mismatches (design <code>topology.dot</code> vs actual)</h3>
+    <div class="table-container" style="margin-bottom: 25px;">
+        <table class="data-table">
+            <thead><tr><th>Device</th><th>Port</th><th>Type</th><th>Expected</th><th>Actual</th></tr></thead>
+            <tbody id="wiring-table"><tr><td colspan="5"><div class="loading">Loading...</div></td></tr></tbody>
         </table>
     </div>
 
@@ -53,12 +62,59 @@
 <script>
 document.addEventListener('DOMContentLoaded', loadAll);
 
+function portName(p) {
+    if (p == null || p === '') return '';
+    const s = String(p);
+    return /^IB\d+\//i.test(s) ? s : `IB1/${s}`;
+}
+function parseDot(text) {
+    const edges = [];
+    const re = /"([^"]+)"\s*:\s*"([^"]+)"\s*--\s*"([^"]+)"\s*:\s*"([^"]+)"/g;
+    let m;
+    while ((m = re.exec(text)) !== null) edges.push({ a: m[1], aPort: m[2], b: m[3], bPort: m[4] });
+    return edges;
+}
+function isAggNode(name) { return /aggregation node/i.test(name || ''); }
+
+function computeWiringFails(dotEdges, topo) {
+    const expectedBy = new Map();
+    for (const e of dotEdges) {
+        // SHARP aggregation nodes are virtual (not cabled) -- skip them or they
+        // produce phantom "miswired" rows.
+        if (isAggNode(e.a) || isAggNode(e.b)) continue;
+        expectedBy.set(`${e.a}|${e.aPort}`, { neighbor: e.b, port: e.bPort });
+        expectedBy.set(`${e.b}|${e.bPort}`, { neighbor: e.a, port: e.aPort });
+    }
+    const guidToDesc = g => { const n = (topo.nodes || []).find(x => x.guid === g); return (n && (n.description || n.hostname)) || g; };
+    const actualBy = new Map();
+    for (const l of (topo.links || [])) {
+        const sDev = l.source_desc || guidToDesc(l.source_guid), tDev = l.target_desc || guidToDesc(l.target_guid);
+        const sPort = portName(l.source_port), tPort = portName(l.target_port);
+        actualBy.set(`${sDev}|${sPort}`, { neighbor: tDev, port: tPort });
+        actualBy.set(`${tDev}|${tPort}`, { neighbor: sDev, port: sPort });
+    }
+    const fails = [];
+    for (const [key, exp] of expectedBy) {
+        const [device, port] = key.split('|');
+        if (isAggNode(device) || isAggNode(exp.neighbor)) continue;
+        const act = actualBy.get(key);
+        if (act && isAggNode(act.neighbor)) continue;
+        if (!act) {
+            fails.push({ device, port, type: 'CABLE MISSING', expected: `${exp.neighbor}:${exp.port}`, actual: '—' });
+        } else if (!(act.neighbor === exp.neighbor && portName(act.port) === portName(exp.port))) {
+            fails.push({ device, port, type: 'MISWIRED', expected: `${exp.neighbor}:${exp.port}`, actual: `${act.neighbor}:${act.port}` });
+        }
+    }
+    return fails;
+}
+
 async function loadAll() {
-    const [topoR, linksR, devR, iniR] = await Promise.all([
+    const [topoR, linksR, devR, iniR, dotR] = await Promise.all([
         fetch('/monitor-results/ib_topology.json', {cache:'no-store'}).catch(() => null),
         fetch('/monitor-results/ib_link_errors.json', {cache:'no-store'}).catch(() => null),
         fetch('/ib-api.sh?action=list-devices').catch(() => null),
         fetch('/assets.ini', {cache:'no-store'}).catch(() => null),
+        fetch('/topology.dot', {cache:'no-store'}).catch(() => null),
     ]);
 
     // 1. Unreachable devices: devices in devices.yaml but missing from assets.ini
@@ -85,8 +141,9 @@ async function loadAll() {
         problems = lr.problem_ports || [];
     } catch (e) {}
 
-    // 3. Orphan nodes: nodes with no links
+    // 3. Orphan nodes: nodes with no links  +  4. Wiring mismatches (dot vs actual)
     let orphans = [];
+    let wiringFails = [];
     try {
         const topo = await topoR.json();
         document.getElementById('last-updated').textContent = topo.last_update
@@ -97,18 +154,33 @@ async function loadAll() {
             linkedGuids.add(l.source_guid); linkedGuids.add(l.target_guid);
         }
         orphans = (topo.nodes || []).filter(n => !linkedGuids.has(n.guid));
+        try {
+            const dotText = (dotR && dotR.ok) ? await dotR.text() : '';
+            if (dotText) wiringFails = computeWiringFails(parseDot(dotText), topo);
+        } catch (e) {}
     } catch (e) {}
 
     // Summary
     document.getElementById('unreachable-count').textContent = unreachable.length;
+    document.getElementById('wiring-mismatches').textContent = wiringFails.length;
     document.getElementById('critical-links').textContent = problems.filter(p => p.severity === 'critical').length;
     document.getElementById('warning-links').textContent = problems.filter(p => p.severity === 'warning').length;
     document.getElementById('orphan-nodes').textContent = orphans.length;
 
-    if (unreachable.length === 0 && problems.length === 0 && orphans.length === 0) {
+    if (unreachable.length === 0 && problems.length === 0 && orphans.length === 0 && wiringFails.length === 0) {
         document.getElementById('banner').innerHTML =
-            '<div class="alert-box alert-info"><strong>No discovery problems detected.</strong> All devices reachable, all links healthy, all nodes connected.</div>';
+            '<div class="alert-box alert-info"><strong>No discovery problems detected.</strong> All devices reachable, all links healthy, all nodes connected, wiring matches design.</div>';
     }
+
+    // Wiring mismatch table
+    document.getElementById('wiring-table').innerHTML = wiringFails.length === 0
+        ? '<tr><td colspan="5"><div style="color:#888;padding:20px;">None — actual wiring matches topology.dot</div></td></tr>'
+        : wiringFails.map(f => {
+            const badge = f.type === 'CABLE MISSING'
+                ? '<span class="badge badge-red">CABLE MISSING</span>'
+                : '<span class="badge badge-red">MISWIRED</span>';
+            return `<tr><td>${f.device}</td><td class="mono">${f.port}</td><td>${badge}</td><td class="mono">${f.expected}</td><td class="mono">${f.actual}</td></tr>`;
+        }).join('');
 
     // Render tables
     document.getElementById('unreachable-table').innerHTML = unreachable.length === 0

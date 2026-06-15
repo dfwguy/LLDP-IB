@@ -121,6 +121,9 @@ for fn in sorted(os.listdir(rawdir)):
     tot = re.search(r'Total power used\s*:\s*([0-9]+\.?[0-9]*)', text)
     if tot:
         out.append(f"Total power used: {tot.group(1)} W")
+    cap = re.search(r'Total power capacity\s*:\s*([0-9]+\.?[0-9]*)', text)
+    if cap:
+        out.append(f"Total power capacity: {cap.group(1)} W")
     out.append("")
 
     # ---- memory: "System memory: A MB used / B MB free / C MB total" ----

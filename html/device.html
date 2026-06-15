@@ -1667,6 +1667,9 @@
             } else if (tabName === 'config' && !tabsLoaded.config) {
                 tabsLoaded.config = true;
                 loadDeviceConfig();
+            } else if (tabName === 'logs' && !tabsLoaded.logs) {
+                tabsLoaded.logs = true;
+                loadFullDeviceLog();
             } else if (tabName === 'capture' && !tabsLoaded.capture) {
                 tabsLoaded.capture = true;
                 loadCaptureInterfaces();
@@ -3049,6 +3052,39 @@
             `;
             const hint = document.getElementById('logHint');
             if (hint) hint.textContent = 'Click a severity to load matching log lines live from the switch (show log matching ...).';
+        }
+
+        // Auto-load the full live log when the Logs tab opens, count every
+        // severity, and populate the cards (these switches log mostly NOTICE/Info,
+        // so the actionable cards are usually 0 -- the log body shows the rest).
+        async function loadFullDeviceLog() {
+            const logOutput = document.getElementById('logOutput');
+            if (!logOutput) return;
+            logOutput.style.display = 'block';
+            logOutput.textContent = 'Loading recent log from ' + deviceName + ' …';
+            try {
+                const resp = await fetch('/ib-api.sh?action=run-device-command', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ device: deviceName, command: 'show log' })
+                });
+                const data = await resp.json();
+                if (!data.success) { logOutput.textContent = 'Error: ' + (data.error || 'command failed'); return; }
+                const lines = (data.output || '').split('\n').filter(l => l.trim());
+                const c = { critical: 0, error: 0, warning: 0, info: 0 };
+                lines.forEach(l => {
+                    const m = l.toUpperCase().match(/\.([A-Z]+)\]/); const s = m ? m[1] : '';
+                    if (['CRIT', 'ALERT', 'EMERG', 'FATAL'].includes(s)) c.critical++;
+                    else if (['ERR', 'ERROR'].includes(s)) c.error++;
+                    else if (['WARN', 'WARNING'].includes(s)) c.warning++;
+                    else c.info++;
+                });
+                const setCard = (id, v) => { const e = document.querySelector('#' + id + ' .value'); if (e) e.textContent = v; };
+                setCard('logCardCritical', c.critical); setCard('logCardError', c.error);
+                setCard('logCardWarning', c.warning); setCard('logCardInfo', c.info);
+                logOutput.textContent = lines.slice(-300).reverse().join('\n') || 'No log lines.';
+            } catch (e) {
+                logOutput.textContent = 'Failed to load log: ' + e.message;
+            }
         }
         
         async function showLogs(severity) {

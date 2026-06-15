@@ -512,6 +512,28 @@ def calculate_device_health_grade(device_name, device_data):
     else:
         return "UNKNOWN"
 
+def parse_psu_load_from_hardware_file(device_name):
+    """Return PSU load percent (used / capacity * 100) or None.
+
+    MLNX-OS exposes 'Total power used' + 'Total power capacity' but no per-rail
+    output, so efficiency can't be computed -- load% is the useful PSU metric.
+    """
+    for base in (".", "monitor-results", "/var/www/html",
+                 "/home/lldpq/lldpq/monitor-results"):
+        hw = os.path.join(base, "hardware-data", f"{device_name}_hardware.txt")
+        if os.path.exists(hw):
+            try:
+                content = open(hw).read()
+                used = re.search(r'Total power used:\s*([0-9]+\.?[0-9]*)\s*W', content)
+                cap = re.search(r'Total power capacity:\s*([0-9]+\.?[0-9]*)\s*W', content)
+                if used and cap and float(cap.group(1)) > 0:
+                    return float(used.group(1)) / float(cap.group(1)) * 100.0
+            except Exception:
+                return None
+            return None
+    return None
+
+
 def generate_hardware_html():
     """Generate hardware analysis HTML using existing data"""
     
@@ -942,6 +964,16 @@ def generate_hardware_html():
             # Input-only (MLNX-OS exposes no PSU output rail).
             psu_in_out_str = f"{psu_in_w:.1f} W"
 
+        # PSU% column: efficiency when both in+out are known, else load% (used/
+        # capacity) -- the meaningful PSU metric on MLNX-OS (no output rail).
+        psu_load_pct = parse_psu_load_from_hardware_file(device_name)
+        if psu_efficiency_parsed is not None:
+            psu_pct_str = f"{psu_efficiency:.1f}%"
+        elif psu_load_pct is not None:
+            psu_pct_str = f"{psu_load_pct:.0f}% load"
+        else:
+            psu_pct_str = "N/A"
+
         # Get model information from assets
         device_model = assets_data.get(device_name, {}).get("model", "N/A")
         
@@ -954,7 +986,7 @@ def generate_hardware_html():
                     <td>{memory_usage if isinstance(memory_usage, (int, float)) else 0.0:.1f}%{mem_cell_suffix}</td>
                     <td>{cpu_load if isinstance(cpu_load, (int, float)) else 0.0:.2f}{load_cell_suffix}</td>
                     <td><span class="{fan_badge_class}">{fan_status}</span>{fan_cell_suffix}</td>
-                    <td>{(f'{psu_efficiency:.1f}%' if psu_efficiency_parsed is not None else 'N/A')}{psu_cell_suffix}</td>
+                    <td>{psu_pct_str}{psu_cell_suffix}</td>
                     <td>{psu_in_out_str}</td>
                     <td>{device_model}</td>
                 </tr>

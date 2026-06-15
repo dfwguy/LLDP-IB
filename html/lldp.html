@@ -342,6 +342,10 @@ function buildRows() {
         const exp = expectedBy.get(key) || null;
         const act = actualBy.get(key)   || null;
 
+        // SHARP aggregation nodes are virtual (not cabled); excluding them avoids
+        // phantom "miswired" rows that are not real cabling faults.
+        if (isAggNode(device) || (exp && isAggNode(exp.neighbor)) || (act && isAggNode(act.neighbor))) continue;
+
         let status = 'nowire';
         let statusLabel = 'NO DATA';
         let pill = 'pill-nowire';
@@ -385,6 +389,8 @@ function buildRows() {
         });
     }
 }
+
+function isAggNode(name) { return /aggregation node/i.test(name || ''); }
 
 function portName(p) {
     if (p == null || p === '') return '';
