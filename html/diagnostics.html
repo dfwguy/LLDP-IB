@@ -54,6 +54,23 @@
         </div>
     </div>
 
+    <!-- ===================== Local Fabric Scan (container, direct IB) ===================== -->
+    <div class="diag-card">
+        <h3>Local Fabric Scan (container, direct IB)</h3>
+        <div class="sub">
+            Runs <code>ibnetdiscover</code> / <code>iblinkinfo</code> / <code>sminfo</code> /
+            <code>ibqueryerrors</code> <strong>directly from this container</strong> (it has direct UMAD access on the
+            IB-connected node). No switch SSH and no <code>ibdiagnet</code> bundle needed &mdash; lightweight, and it
+            surfaces <strong>real per-port error counters</strong> (LinkDowned / SymbolErrors / PortXmitDiscards) that
+            the UFM REST API does not expose.
+        </div>
+        <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
+            <button class="btn btn-primary" id="run-local-btn" onclick="runLocalScan()">Run Local Scan</button>
+            <span class="diag-status" id="local-status"></span>
+        </div>
+        <div id="local-body" style="margin-top:16px;"></div>
+    </div>
+
     <!-- ===================== Fabric Diagnostic (ibdiagnet) builder ===================== -->
     <div class="diag-card">
         <h3>Fabric Diagnostic (ibdiagnet)</h3>
@@ -396,6 +413,61 @@ function pollStatus(runId) {
 }
 
 // ---------------- result rendering ----------------
+// ---- Local Fabric Scan (container ibutils, direct IB) ----
+async function runLocalScan() {
+    const btn = document.getElementById('run-local-btn');
+    const status = document.getElementById('local-status');
+    const body = document.getElementById('local-body');
+    btn.disabled = true;
+    status.textContent = 'Scanning fabric (ibnetdiscover / iblinkinfo / sminfo / ibqueryerrors)…';
+    body.innerHTML = '';
+    try {
+        const r = await fetch('/diag-api.sh?action=local-scan', { cache: 'no-store' });
+        const d = await r.json();
+        if (!d.success) {
+            status.textContent = '';
+            body.innerHTML = `<div class="alert-box alert-warning">${esc(d.error || 'Scan failed')}</div>`;
+            return;
+        }
+        renderLocalScan(d);
+        status.textContent = 'Done · ' + (d.generated_at || '');
+    } catch (e) {
+        status.textContent = '';
+        body.innerHTML = `<div class="alert-box alert-warning">Scan error: ${esc(e.message)}</div>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderLocalScan(d) {
+    const s = d.summary || {};
+    const errs = d.error_ports || [];
+    const downs = d.down_links_list || [];
+    const smOk = (s.sm || '').toUpperCase().includes('MASTER');
+    let html = `<div class="summary-grid" style="grid-template-columns:repeat(6,1fr);">
+        <div class="summary-card card-total"><div class="card-value">${s.switches || 0}</div><div class="card-label">Switches</div></div>
+        <div class="summary-card card-info"><div class="card-value">${s.cas || 0}</div><div class="card-label">HCAs / CAs</div></div>
+        <div class="summary-card card-success"><div class="card-value">${s.links || 0}</div><div class="card-label">Links</div></div>
+        <div class="summary-card ${(s.down_links | 0) > 0 ? 'card-danger' : 'card-success'}"><div class="card-value">${s.down_links || 0}</div><div class="card-label">Down/Degraded</div></div>
+        <div class="summary-card ${(s.ports_with_errors | 0) > 0 ? 'card-warning' : 'card-success'}"><div class="card-value">${s.ports_with_errors || 0}</div><div class="card-label">Ports w/ Errors</div></div>
+        <div class="summary-card ${smOk ? 'card-success' : 'card-danger'}"><div class="card-value" style="font-size:15px;">${smOk ? 'OK' : '?'}</div><div class="card-label">SM Master</div></div>
+    </div>`;
+    if (d.sm_info) html += `<div style="font-size:12px;color:#888;margin:8px 0;font-family:monospace;">${esc(d.sm_info)}</div>`;
+    if (errs.length) {
+        html += `<h3 style="color:#ff9800;margin:14px 0 8px;">Ports with error counters <span style="color:#888;font-weight:400;font-size:12px;">(ibqueryerrors — real fabric counters)</span></h3>
+        <div class="table-container"><table class="data-table"><thead><tr><th>Device</th><th>Port</th><th>Counters</th></tr></thead><tbody>`;
+        html += errs.map(e => `<tr><td>${esc(e.device || '-')}</td><td>${esc(String(e.port))}</td><td style="font-family:monospace;font-size:12px;">${Object.entries(e.counters || {}).map(([k, v]) => `${esc(k)}=${v}`).join('  ')}</td></tr>`).join('');
+        html += `</tbody></table></div>`;
+    } else {
+        html += `<div class="alert-box alert-info" style="margin-top:10px;">No ports reporting error counters.</div>`;
+    }
+    if (downs.length) {
+        html += `<h3 style="color:#f44336;margin:14px 0 8px;">Down / degraded links</h3>
+        <pre style="background:#111;padding:10px;border-radius:4px;overflow:auto;max-height:240px;font-size:12px;">${esc(downs.join('\n'))}</pre>`;
+    }
+    document.getElementById('local-body').innerHTML = html;
+}
+
 async function loadLatest() {
     try {
         const r = await fetch('/diag-api.sh?action=last', {cache:'no-store'});

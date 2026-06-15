@@ -87,6 +87,18 @@ print(json.dumps({'success': True, 'targets': targets, 'ufm_configured': bool(uf
 PY
         ;;
 
+    local-scan)
+        # Direct in-container IB fabric scan via local ibutils (no switch SSH, no
+        # ibdiagnet bundle). UMAD is root-only, so run via sudo. The container must
+        # be --privileged --network host on an IB-connected node.
+        OUT=$(sudo -n "$LLDPQ_DIR/ib-local-scan.sh" 2>/dev/null)
+        if printf '%s' "$OUT" | grep -q '"success": true'; then
+            printf '%s\n' "$OUT"
+        else
+            echo '{"success": false, "error": "Local scan failed. Needs direct container IB (UMAD) access and the ib-local-scan sudo rule. Confirm the container runs --privileged --network host on an IB-connected node."}'
+        fi
+        ;;
+
     run)
         if [ "${REQUEST_METHOD:-GET}" != "POST" ]; then
             echo '{"success": false, "error": "run requires POST"}'
