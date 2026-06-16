@@ -86,7 +86,23 @@
             <div class="setup-row"><span class="k">Token</span><span class="v" id="ufm-token">-</span></div>
             <p>UFM adds alert validation, BER history, and topology cross-check.</p>
             <div class="setup-actions">
-                <button class="primary" onclick="location.href='ufm-status.html'">Configure UFM</button>
+                <button class="primary" onclick="location.href='ufm-status.html'">Configure UFM (REST)</button>
+            </div>
+
+            <div style="border-top:1px solid #333; margin-top:14px; padding-top:12px;">
+                <div class="setup-row"><span class="k">UFM SSH (ibdiagnet)</span><span class="v" id="ufmssh-state">-</span></div>
+                <p style="color:#ccc;"><strong>Run full <code>ibdiagnet</code> on the UFM appliance.</strong> UFM is containerized, so this installs the collector SSH key on the UFM <em>host</em> (password used once, not stored) and runs ibdiagnet inside its container. Then it shows up as a target on the Diagnostics page.</p>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <input id="ufmssh-host" placeholder="UFM host SSH (e.g. 10.230.237.4)" style="width:100%; padding:8px 10px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px;">
+                    <input id="ufmssh-user" value="root" placeholder="SSH user" style="width:100%; padding:8px 10px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px;">
+                    <input id="ufmssh-pw" type="password" placeholder="UFM host password" autocomplete="new-password" style="width:100%; padding:8px 10px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px;">
+                    <input id="ufmssh-ct" value="ufm" placeholder="UFM container name" style="width:100%; padding:8px 10px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px;">
+                    <input id="ufmssh-bin" value="/opt/ufm/opensm/bin/ibdiagnet" placeholder="ibdiagnet path in container" style="grid-column:1/3; width:100%; padding:8px 10px; background:#1a1a1a; color:#d4d4d4; border:1px solid #404040; border-radius:4px; font-family:monospace;">
+                </div>
+                <div class="setup-actions" style="margin-top:10px;">
+                    <button class="primary" onclick="setupUfmSsh()">Push key &amp; test</button>
+                </div>
+                <div id="ufmssh-status" style="margin-top:8px; font-size:12px; color:#888;"></div>
             </div>
         </div>
 
@@ -117,6 +133,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ok = await LLDPqAuth.check();
     if (!ok) return;
     loadStatus();
+    loadUfmSshState();
 });
 
 function yn(v) {
@@ -226,6 +243,58 @@ async function pushSSHKey() {
             + (data.fail_count ? ` &middot; ${data.fail_count} failed (check password / reachability)` : '')
             + (rows ? `<div style="margin-top:6px;color:#bbb;">${rows}</div>` : '');
         loadStatus();
+    } catch (e) {
+        status.style.color = '#f44336';
+        status.textContent = 'Error: ' + e.message;
+    }
+}
+
+async function loadUfmSshState() {
+    const el = document.getElementById('ufmssh-state');
+    if (!el) return;
+    try {
+        const r = await fetch('/diag-api.sh?action=targets', {cache:'no-store'});
+        const d = await r.json();
+        const ufm = (d.targets || []).find(t => t.id === 'ufm');
+        if (ufm) {
+            el.innerHTML = '<span class="badge badge-green">configured</span> ' + (ufm.label || '');
+            const hostInput = document.getElementById('ufmssh-host');
+            const m = (ufm.label || '').match(/\(([^)]+)\)/);
+            if (hostInput && !hostInput.value && m) hostInput.value = m[1];
+        } else {
+            el.innerHTML = '<span class="badge badge-gray">not set</span>';
+        }
+    } catch (e) { el.textContent = '-'; }
+}
+
+async function setupUfmSsh() {
+    const status = document.getElementById('ufmssh-status');
+    const body = {
+        host: document.getElementById('ufmssh-host').value.trim(),
+        user: document.getElementById('ufmssh-user').value.trim() || 'root',
+        password: document.getElementById('ufmssh-pw').value,
+        container: document.getElementById('ufmssh-ct').value.trim() || 'ufm',
+        bin: document.getElementById('ufmssh-bin').value.trim() || '/opt/ufm/opensm/bin/ibdiagnet',
+    };
+    if (!body.host || !body.password) {
+        status.style.color = '#f44336'; status.textContent = 'Host and password are required.'; return;
+    }
+    status.style.color = '#888';
+    status.textContent = 'Installing collector key & testing ibdiagnet in the container…';
+    try {
+        const r = await fetch('/diag-api.sh?action=ufm-ssh-setup', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.success) {
+            status.style.color = '#4caf50';
+            status.textContent = 'OK \u2014 ' + (d.ibdiagnet_version || 'ibdiagnet ready') + '. UFM is now a Diagnostics target.';
+            document.getElementById('ufmssh-pw').value = '';
+            loadUfmSshState();
+        } else {
+            status.style.color = '#f44336';
+            status.textContent = (d.error || 'Setup failed') + (d.detail ? (' \u2014 ' + d.detail) : '');
+        }
     } catch (e) {
         status.style.color = '#f44336';
         status.textContent = 'Error: ' + e.message;

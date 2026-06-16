@@ -27,6 +27,10 @@ echo ""
 source /etc/lldpq.conf 2>/dev/null || true
 export LLDPQ_DIR="${LLDPQ_DIR:-/home/lldpq/lldpq}"
 export WEB_ROOT="${WEB_ROOT:-/var/www/html}"
+# Export UFM/ibdiagnet settings so the python blocks (os.environ) can read them
+# (source sets shell vars, which are NOT inherited by subprocesses unless exported).
+export UFM_SSH_HOST="${UFM_SSH_HOST:-}" UFM_SSH_USER="${UFM_SSH_USER:-root}"
+export IBDIAGNET_DOCKER="${IBDIAGNET_DOCKER:-}" IBDIAGNET_BIN="${IBDIAGNET_BIN:-}"
 RUNS_DIR="$WEB_ROOT/monitor-results/ibdiag-runs"
 
 ACTION="${QUERY_STRING#*action=}"
@@ -89,25 +93,36 @@ PY
             echo '{"success": false, "error": "No run id"}'
             exit 0
         fi
-        rm -f "$RUNS_DIR/${RUN}.json" "$RUNS_DIR/${RUN}.status" "$RUNS_DIR/${RUN}.tar.gz" 2>/dev/null
-        export DEL_RUN="$RUN" DEL_DIR="$RUNS_DIR"
+        # Runs live in BOTH the web dir (served) and the working dir (source of
+        # truth that run-ibdiagnet re-publishes). Clean both, or a later run's
+        # publish resurrects the deleted entry. The working dir is root-owned, so
+        # remove the files via sudo (www-data has a NOPASSWD rm rule).
+        WORK_RUNS="$LLDPQ_DIR/monitor-results/ibdiag-runs"
+        for d in "$RUNS_DIR" "$WORK_RUNS"; do
+            sudo rm -f "$d/${RUN}.json" "$d/${RUN}.status" "$d/${RUN}.run.log" "$d/${RUN}.tar.gz" 2>/dev/null
+        done
+        export DEL_RUN="$RUN" DEL_DIRS="$RUNS_DIR:$WORK_RUNS"
         python3 <<'PY'
 import json, os
-runs_dir = os.environ['DEL_DIR']; run_id = os.environ['DEL_RUN']
-idx = os.path.join(runs_dir, 'index.json')
-try:
-    data = json.load(open(idx))
-except Exception:
-    data = []
-before = len(data)
-data = [e for e in data if e.get('run_id') != run_id]
-try:
-    with open(idx, 'w') as f:
-        json.dump(data, f, indent=2)
-except Exception as e:
-    print(json.dumps({'success': False, 'error': str(e)}))
-    raise SystemExit
-print(json.dumps({'success': True, 'deleted': run_id, 'removed': before - len(data)}))
+run_id = os.environ['DEL_RUN']
+removed = 0
+for runs_dir in os.environ['DEL_DIRS'].split(':'):
+    idx = os.path.join(runs_dir, 'index.json')
+    if not os.path.exists(idx):
+        continue
+    try:
+        data = json.load(open(idx))
+    except Exception:
+        data = []
+    before = len(data)
+    data = [e for e in data if e.get('run_id') != run_id]
+    removed += before - len(data)
+    try:
+        with open(idx, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+print(json.dumps({'success': True, 'deleted': run_id, 'removed': removed}))
 PY
         ;;
 
@@ -120,6 +135,33 @@ PY
             printf '%s\n' "$OUT"
         else
             echo '{"success": false, "error": "Local scan failed. Needs direct container IB (UMAD) access and the ib-local-scan sudo rule. Confirm the container runs --privileged --network host on an IB-connected node."}'
+        fi
+        ;;
+
+    ufm-ssh-setup)
+        # POST {host, user, password, container, bin} -> install the collector key
+        # on the UFM appliance host and wire ibdiagnet-via-docker. The push runs
+        # AS lldpq (collector-key owner) via sudo.
+        if [ "${REQUEST_METHOD:-GET}" != "POST" ]; then
+            echo '{"success": false, "error": "POST required"}'; exit 0
+        fi
+        read -r POST_DATA
+        export POST_DATA
+        _field() { python3 -c 'import json,os,sys; print(str(json.loads(os.environ.get("POST_DATA") or "{}").get(sys.argv[1],"") or ""))' "$1" 2>/dev/null; }
+        U_HOST=$(_field host); U_USER=$(_field user); U_PW=$(_field password)
+        U_CT=$(_field container); U_BIN=$(_field bin)
+        if [ -z "$U_HOST" ] || [ -z "$U_PW" ]; then
+            echo '{"success": false, "error": "host and password are required"}'; exit 0
+        fi
+        ARGS=(-h "$U_HOST" -p "$U_PW")
+        [ -n "$U_USER" ] && ARGS+=(-u "$U_USER")
+        [ -n "$U_CT" ]   && ARGS+=(-c "$U_CT")
+        [ -n "$U_BIN" ]  && ARGS+=(-b "$U_BIN")
+        OUT=$(sudo -u "$LLDPQ_USER" -H "$LLDPQ_DIR/setup-ufm-ssh.sh" "${ARGS[@]}" 2>/dev/null)
+        if printf '%s' "$OUT" | grep -q '"success"'; then
+            printf '%s\n' "$OUT"
+        else
+            echo '{"success": false, "error": "setup-ufm-ssh.sh produced no result (sudo rule / script present?)"}'
         fi
         ;;
 
@@ -259,6 +301,9 @@ env['IBDIAG_USER']   = ssh_user
 env['IBDIAG_BIN']    = bin_choice
 env['IBDIAG_FLAGS']  = flag_str
 env['IBDIAG_RUN_ID'] = run_id
+# UFM Enterprise runs ibdiagnet inside a container; wrap the run in docker exec.
+if target_id == 'ufm':
+    env['IBDIAG_DOCKER'] = os.environ.get('IBDIAGNET_DOCKER', 'ufm')
 
 runner = os.path.join(lldpq_dir, 'run-ibdiagnet.sh')
 try:

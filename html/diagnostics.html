@@ -92,6 +92,22 @@
                 <select id="diag-target" class="diag-panel" style="width:100%;padding:8px 10px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></select>
                 <div id="ufm-note" style="font-size:11px;color:#888;margin-top:4px;"></div>
 
+                <details class="diag-det" style="margin-top:10px;">
+                    <summary style="cursor:pointer;color:#76b900;font-size:13px;">Set up UFM SSH (run ibdiagnet on the UFM appliance)</summary>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">
+                        <label style="font-size:11px;color:#aaa;">UFM host (SSH)<input id="ufm-ssh-host" placeholder="10.230.237.4" style="width:100%;padding:6px 8px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></label>
+                        <label style="font-size:11px;color:#aaa;">SSH user<input id="ufm-ssh-user" value="root" style="width:100%;padding:6px 8px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></label>
+                        <label style="font-size:11px;color:#aaa;">SSH password<input id="ufm-ssh-pw" type="password" placeholder="UFM host password" autocomplete="new-password" style="width:100%;padding:6px 8px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></label>
+                        <label style="font-size:11px;color:#aaa;">UFM container<input id="ufm-ssh-ct" value="ufm" style="width:100%;padding:6px 8px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;"></label>
+                        <label style="font-size:11px;color:#aaa;grid-column:1/3;">ibdiagnet path (in container)<input id="ufm-ssh-bin" value="/opt/ufm/opensm/bin/ibdiagnet" style="width:100%;padding:6px 8px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;font-family:monospace;"></label>
+                    </div>
+                    <div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+                        <button class="btn btn-secondary" style="padding:7px 12px;" onclick="setupUfmSsh()">Push key &amp; test</button>
+                        <span id="ufm-ssh-status" style="font-size:12px;color:#888;"></span>
+                    </div>
+                    <div style="font-size:11px;color:#777;margin-top:6px;">Installs the collector SSH key on the UFM host (password used once) and verifies ibdiagnet runs in the container. Then the UFM appliance appears as a target above.</div>
+                </details>
+
                 <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
                     <button class="btn btn-secondary" style="padding:7px 12px;" onclick="applyFullPreset()">Full run preset</button>
                     <button class="btn btn-secondary" style="padding:7px 12px;" onclick="clearFlags()">Clear</button>
@@ -261,6 +277,40 @@ function buildOutputChips() {
     wrap.innerHTML = OUTPUT_TOKENS.map(t =>
         `<label class="flag-chip"><input type="checkbox" data-out="${t}" onchange="updatePreview()"> ${t}</label>`
     ).join('');
+}
+
+async function setupUfmSsh() {
+    const status = document.getElementById('ufm-ssh-status');
+    const body = {
+        host: document.getElementById('ufm-ssh-host').value.trim(),
+        user: document.getElementById('ufm-ssh-user').value.trim() || 'root',
+        password: document.getElementById('ufm-ssh-pw').value,
+        container: document.getElementById('ufm-ssh-ct').value.trim() || 'ufm',
+        bin: document.getElementById('ufm-ssh-bin').value.trim() || '/opt/ufm/opensm/bin/ibdiagnet',
+    };
+    if (!body.host || !body.password) {
+        status.style.color = '#ef5350'; status.textContent = 'Host and password are required.'; return;
+    }
+    status.style.color = '#888';
+    status.textContent = 'Installing collector key & testing ibdiagnet in the container…';
+    try {
+        const r = await fetch('/diag-api.sh?action=ufm-ssh-setup', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.success) {
+            status.style.color = '#81c784';
+            status.textContent = 'OK \u2014 ' + (d.ibdiagnet_version || 'ibdiagnet ready') + '. UFM appliance is now a target.';
+            document.getElementById('ufm-ssh-pw').value = '';
+            loadTargets();
+        } else {
+            status.style.color = '#ef5350';
+            status.textContent = (d.error || 'Setup failed') + (d.detail ? (' \u2014 ' + d.detail) : '');
+        }
+    } catch (e) {
+        status.style.color = '#ef5350';
+        status.textContent = 'Error: ' + e.message;
+    }
 }
 
 async function loadTargets() {
@@ -519,10 +569,14 @@ function renderSummary(d) {
             <div class="summary-card card-total"><div class="card-value">${fmt(cables.entries)}</div><div class="card-label">Cables</div></div>
         </div>
         <div style="font-size:12px;color:#aaa;margin-bottom:12px;">
-            <div><strong style="color:#ccc;">Target:</strong> ${esc(d.target||'-')} &nbsp;·&nbsp; <strong style="color:#ccc;">Finished:</strong> ${esc(d.finished_at||'-')} &nbsp;·&nbsp; <strong style="color:#ccc;">Run:</strong> ${esc(d.run_id||'-')}</div>
+            <div><strong style="color:#ccc;">Target:</strong> ${esc(d.target||'-')} &nbsp;·&nbsp; <strong style="color:#ccc;">Finished:</strong> ${esc(d.finished_at||'-')} &nbsp;·&nbsp; <strong style="color:#ccc;">Run:</strong> ${esc(d.run_id||'-')}${d.version ? ' &nbsp;·&nbsp; <strong style="color:#ccc;">ibdiagnet:</strong> ' + esc(d.version) : ''}${d.run_host ? ' &nbsp;·&nbsp; <strong style="color:#ccc;">Host:</strong> ' + esc(d.run_host) : ''}</div>
             <div style="margin-top:4px;"><code style="color:#9cdcfe;">${esc(d.command||'')}</code></div>
             ${d.raw_archive ? `<div style="margin-top:6px;"><a href="/monitor-results/ibdiag-runs/${esc(d.raw_archive)}" class="btn btn-secondary" style="padding:5px 12px;display:inline-flex;">Download raw archive (${humanSize(d.raw_size_bytes)})</a></div>` : '<div style="margin-top:6px;color:#777;">Raw output discarded (retention).</div>'}
         </div>`;
+
+    if ((d.fabric_summary || []).length) {
+        html += `<details class="diag-det" open><summary>Fabric Summary (nodes / switches / HCAs / links / speeds)</summary><pre>${esc(d.fabric_summary.join('\n'))}</pre></details>`;
+    }
 
     if ((d.stages || []).length) {
         html += `<table class="data-table" style="margin-bottom:8px;"><thead><tr><th>Stage</th><th class="num">Warnings</th><th class="num">Errors</th><th>Comment</th></tr></thead><tbody>`;
@@ -537,7 +591,7 @@ function renderSummary(d) {
         html += `<details class="diag-det" open><summary>Errors (${d.top_errors.length})</summary><pre>${esc(d.top_errors.join('\n'))}</pre></details>`;
     }
     if ((d.top_warnings || []).length) {
-        html += `<details class="diag-det"><summary>Warnings (${d.top_warnings.length})</summary><pre>${esc(d.top_warnings.join('\n'))}</pre></details>`;
+        html += `<details class="diag-det" open><summary>Warnings (${d.top_warnings.length})</summary><pre>${esc(d.top_warnings.join('\n'))}</pre></details>`;
     }
     if ((d.files || []).length) {
         const fl = d.files.map(f => `${f.name} (${humanSize(f.size_bytes)})`).join('\n');

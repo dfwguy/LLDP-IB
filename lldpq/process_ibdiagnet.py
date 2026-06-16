@@ -136,6 +136,43 @@ def parse_log(log_text):
     }
 
 
+def parse_fabric_summary(log_text):
+    """Capture the ibdiagnet 'Fabric Summary' block verbatim (node / switch / CA /
+    link / speed counts) for the detailed report view. Best-effort + version
+    tolerant -- missing block degrades to []."""
+    out = []
+    capturing = False
+    for raw in log_text.splitlines():
+        s = raw.rstrip()
+        if not capturing:
+            if 'fabric summary' in s.strip().lower():
+                capturing = True
+            continue
+        stripped = s.strip()
+        # Stop at the next dashed separator or the stage-summary table header.
+        if (stripped and set(stripped) == {'-'} and len(stripped) >= 6) \
+                or stripped.lower().startswith('-i- stage'):
+            break
+        out.append(stripped[:LINE_CLIP])
+        if len(out) >= 120:
+            break
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+def parse_header(log_text):
+    """Pull the ibdiagnet version + run host from the log header."""
+    info = {}
+    m = re.search(r'Running version:\s*"?([^",\n]+)', log_text)
+    if m:
+        info['version'] = m.group(1).strip()
+    m = re.search(r'Running on host:\s*(\S+)', log_text)
+    if m:
+        info['run_host'] = m.group(1).strip()
+    return info
+
+
 def parse_cables(input_dir):
     """Best-effort cable count from ibdiagnet2.cables / db_csv CABLE_INFO section."""
     cables_path = os.path.join(input_dir, 'ibdiagnet2.cables')
@@ -195,6 +232,7 @@ def main():
         'stages': [],
         'top_errors': [],
         'top_warnings': [],
+        'fabric_summary': [],
         'cables': {'source': None, 'entries': 0},
         'files': [],
         'parsed': False,
@@ -205,8 +243,11 @@ def main():
     else:
         log_path = _find_log(input_dir)
         if log_path:
-            parsed = parse_log(_read_text(log_path))
+            log_text = _read_text(log_path)
+            parsed = parse_log(log_text)
             summary.update(parsed)
+            summary['fabric_summary'] = parse_fabric_summary(log_text)
+            summary.update(parse_header(log_text))
             summary['parsed'] = True
             summary['log_file'] = os.path.basename(log_path)
         else:

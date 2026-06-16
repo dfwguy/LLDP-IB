@@ -142,8 +142,29 @@ else
         fail "Invalid target host"
     fi
 
+    # Docker mode: when the target's ibdiagnet lives inside a container (e.g. UFM
+    # Enterprise is containerized), wrap every remote command in `docker exec`.
+    DOCKER_CT="${IBDIAG_DOCKER:-${IBDIAGNET_DOCKER:-}}"
+    if [ -n "$DOCKER_CT" ] && ! printf '%s' "$DOCKER_CT" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+        fail "Invalid IBDIAG_DOCKER container name"
+    fi
+
     REMOTE_TMP="/tmp/lldpq-ibdiag-${RUN_ID}"
-    CMD_LINE="$BIN $FLAGS -o $REMOTE_TMP"
+    EXCL="--exclude=ibdiagnet2.db_csv --exclude=ibdiagnet2.pm --exclude='*.fdbs' --exclude='*.net_dump'"
+    if [ -n "$DOCKER_CT" ]; then
+        CMD_LINE="docker exec $DOCKER_CT $BIN $FLAGS -o $REMOTE_TMP"
+        R_RUN="docker exec $DOCKER_CT bash -lc 'mkdir -p $REMOTE_TMP && $BIN $FLAGS -o $REMOTE_TMP'"
+        R_TARP="docker exec $DOCKER_CT tar czf - -C $REMOTE_TMP $EXCL . 2>/dev/null"
+        R_TARRAW="docker exec $DOCKER_CT tar czf - -C $REMOTE_TMP . 2>/dev/null"
+        R_RM="docker exec $DOCKER_CT rm -rf $REMOTE_TMP"
+    else
+        CMD_LINE="$BIN $FLAGS -o $REMOTE_TMP"
+        R_RUN="mkdir -p '$REMOTE_TMP' && $BIN $FLAGS -o '$REMOTE_TMP'"
+        R_TARP="tar czf - -C '$REMOTE_TMP' $EXCL . 2>/dev/null"
+        R_TARRAW="tar czf - -C '$REMOTE_TMP' . 2>/dev/null"
+        R_RM="rm -rf '$REMOTE_TMP'"
+    fi
+
     # Use lldpq's SSH key. If we're already running as lldpq (cron), ssh directly;
     # if launched by the web (www-data via fcgiwrap), sudo to lldpq first.
     if [ "$(id -un 2>/dev/null)" = "$LLDPQ_USER" ]; then
@@ -154,11 +175,9 @@ else
     SSH+=(-o BatchMode=yes -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=12)
 
-    set_status "running" "Running ibdiagnet on $TARGET (this can take minutes)"
+    set_status "running" "Running ibdiagnet on $TARGET${DOCKER_CT:+ (docker: $DOCKER_CT)} (this can take minutes)"
     echo "\$ $CMD_LINE" >> "$RUN_LOG"
-    if ! "${SSH[@]}" "$SSH_USER@$TARGET" \
-            "mkdir -p '$REMOTE_TMP' && $BIN $FLAGS -o '$REMOTE_TMP'" \
-            >> "$RUN_LOG" 2>&1; then
+    if ! "${SSH[@]}" "$SSH_USER@$TARGET" "$R_RUN" >> "$RUN_LOG" 2>&1; then
         # ibdiagnet returns non-zero when it finds fabric errors; that is still a
         # valid, parseable run. Only bail if no output dir was produced.
         echo "(ibdiagnet exited non-zero -- continuing to collect output)" >> "$RUN_LOG"
@@ -166,19 +185,16 @@ else
 
     set_status "collecting" "Collecting + pruning raw output from $TARGET"
     # Parse-pull: everything EXCEPT the known-huge files (keeps transfer tiny).
-    "${SSH[@]}" "$SSH_USER@$TARGET" \
-        "tar czf - -C '$REMOTE_TMP' --exclude=ibdiagnet2.db_csv --exclude=ibdiagnet2.pm --exclude='*.fdbs' --exclude='*.net_dump' . 2>/dev/null" \
-        2>>"$RUN_LOG" | tar xzf - -C "$PARSE_DIR" 2>>"$RUN_LOG" || true
+    "${SSH[@]}" "$SSH_USER@$TARGET" "$R_TARP" 2>>"$RUN_LOG" | tar xzf - -C "$PARSE_DIR" 2>>"$RUN_LOG" || true
 
     # Optional raw archive (the big transfer) -- only when retention asks for it.
     if [ "$KEEP_RAW" -gt 0 ]; then
-        "${SSH[@]}" "$SSH_USER@$TARGET" "tar czf - -C '$REMOTE_TMP' . 2>/dev/null" \
-            > "$RAW_ARCHIVE" 2>>"$RUN_LOG" || true
+        "${SSH[@]}" "$SSH_USER@$TARGET" "$R_TARRAW" > "$RAW_ARCHIVE" 2>>"$RUN_LOG" || true
         [ -s "$RAW_ARCHIVE" ] || rm -f "$RAW_ARCHIVE"
     fi
 
     # Always delete the raw output on the target -- never leave 2-3 GB behind.
-    "${SSH[@]}" "$SSH_USER@$TARGET" "rm -rf '$REMOTE_TMP'" >> "$RUN_LOG" 2>&1 || true
+    "${SSH[@]}" "$SSH_USER@$TARGET" "$R_RM" >> "$RUN_LOG" 2>&1 || true
     set_status "parsing" "Parsing diagnostic output"
 fi
 
