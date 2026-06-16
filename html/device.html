@@ -914,10 +914,14 @@
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show version')">show version</button>
                         <button class="cmd-btn" onclick="runCommand('show inventory')">show inventory</button>
+                        <button class="cmd-btn" onclick="runCommand('show asic-version')">show asic-version</button>
+                        <button class="cmd-btn" onclick="runCommand('show module')">show module</button>
+                        <button class="cmd-btn" onclick="runCommand('show images')">show images</button>
                         <button class="cmd-btn" onclick="runCommand('show power')">show power</button>
                         <button class="cmd-btn" onclick="runCommand('show fan')">show fan</button>
                         <button class="cmd-btn" onclick="runCommand('show temperature')">show temperature</button>
                         <button class="cmd-btn" onclick="runCommand('show resources')">show resources</button>
+                        <button class="cmd-btn" onclick="runCommand('show health-report')">show health-report</button>
                         <button class="cmd-btn" onclick="runCommand('show clock')">show clock</button>
                     </div>
                 </div>
@@ -960,10 +964,6 @@
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show ib sm')">show ib sm</button>
                         <button class="cmd-btn" onclick="runCommand('show ib smnodes')">show ib smnodes</button>
-                        <button class="cmd-btn" onclick="runCommand('ib ibhosts')">ib ibhosts</button>
-                        <button class="cmd-btn" onclick="runCommand('ib ibnetdiscover -l')">ibnetdiscover -l (list)</button>
-                        <button class="cmd-btn" onclick="runCommand('ib iblinkinfo --line')">iblinkinfo</button>
-                        <button class="cmd-btn" onclick="runCommand('ib ibqueryerrors')">ibqueryerrors</button>
                     </div>
                 </div>
             </div>
@@ -977,40 +977,23 @@
                 <div class="command-group-content">
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show ib partition')">show ib partition</button>
-                        <button class="cmd-btn" onclick="runCommand('show ib qos-profile')">show ib qos-profile</button>
-                        <button class="cmd-btn" onclick="runCommand('ib saquery -m')">multicast groups</button>
                     </div>
                 </div>
             </div>
 
-            <!-- Performance / Diagnostics -->
-            <div class="command-group collapsed">
-                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4db6ac" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                    <span style="color: #4db6ac;">Performance & Cables</span>
-                </div>
-                <div class="command-group-content">
-                    <div class="command-buttons">
-                        <button class="cmd-btn" onclick="runCommand('ib perfquery -a')">perfquery -a</button>
-                        <button class="cmd-btn" onclick="runCommand('ib ibqueryerrors --details')">ibqueryerrors --details</button>
-                        <button class="cmd-btn" onclick="runCommand('show ib sharp aggregation-nodes')">show SHARP nodes</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- IP / Management -->
+            <!-- Management & Network -->
             <div class="command-group collapsed">
                 <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f06292" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                    <span style="color: #f06292;">Management (Linux shell)</span>
+                    <span style="color: #f06292;">Management &amp; Network</span>
                 </div>
                 <div class="command-group-content">
                     <div class="command-buttons">
-                        <button class="cmd-btn" onclick="runCommand('ip link show')">ip link show</button>
-                        <button class="cmd-btn" onclick="runCommand('ip addr show')">ip addr show</button>
-                        <button class="cmd-btn" onclick="runCommand('uptime')">uptime</button>
-                        <button class="cmd-btn" onclick="runCommand('free -h')">free -h</button>
-                        <button class="cmd-btn" onclick="runCommand('df -h')">df -h</button>
+                        <button class="cmd-btn" onclick="runCommand('show ip interface')">show ip interface</button>
+                        <button class="cmd-btn" onclick="runCommand('show ip route')">show ip route</button>
+                        <button class="cmd-btn" onclick="runCommand('show ntp')">show ntp</button>
+                        <button class="cmd-btn" onclick="runCommand('show snmp')">show snmp</button>
+                        <button class="cmd-btn" onclick="runCommand('show ssh server')">show ssh server</button>
                     </div>
                 </div>
             </div>
@@ -1027,6 +1010,7 @@
                         <button class="cmd-btn" onclick="runCommand('show log continuous')">show log continuous</button>
                         <button class="cmd-btn" onclick="runCommand('show log matching ERR')">errors only</button>
                         <button class="cmd-btn" onclick="runCommand('show log matching WARN')">warnings</button>
+                        <button class="cmd-btn" onclick="runCommand('show log matching INFO')">info</button>
                     </div>
                 </div>
             </div>

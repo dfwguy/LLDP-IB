@@ -124,14 +124,17 @@
 
 <script>
 // ---- command presets (mirrors Device Details -> Command Runner) ----
+// All commands verified to run on MLNX-OS 3.12 switch CLI (interactive enable mode).
+// The `ib <util>` forms (ibhosts/iblinkinfo/ibqueryerrors/saquery/perfquery) are NOT
+// here: on MLNX-OS `ib` is an ibdiagnet wrapper, so they return ibdiagnet usage, not
+// query output. Fabric-wide IB data comes from UFM / the ibdiagnet Diagnostics page.
 const CMD_GROUPS = [
-    { title:'System & Hardware', color:'#76b900', cmds:['show version','show inventory','show power','show fan','show temperature','show resources','show clock'] },
+    { title:'System & Hardware', color:'#76b900', cmds:['show version','show inventory','show asic-version','show module','show power','show fan','show temperature','show resources','show health-report','show clock'] },
     { title:'IB Interfaces', color:'#4fc3f7', cmds:['show interfaces ib status','show interfaces ib link-diagnostics','show interfaces ib transceiver','show interfaces ib transceiver diagnostics'] },
-    { title:'Subnet Manager', color:'#ffb74d', cmds:['show ib sm','show ib smnodes','ib ibhosts','ib ibnetdiscover -l','ib iblinkinfo --line','ib ibqueryerrors'] },
-    { title:'P_Key & QoS', color:'#ba68c8', cmds:['show ib partition','show ib qos-profile','ib saquery -m'] },
-    { title:'Performance & Cables', color:'#4db6ac', cmds:['ib perfquery -a','ib ibqueryerrors --details','show ib sharp aggregation-nodes'] },
-    { title:'Management (Linux shell)', color:'#f06292', cmds:['ip link show','ip addr show','uptime','free -h','df -h'] },
-    { title:'Logs & Debug', color:'#ef5350', cmds:['show log files','show log continuous','show log matching ERR','show log matching WARN'] },
+    { title:'Subnet Manager & P_Key', color:'#ffb74d', cmds:['show ib sm','show ib smnodes','show ib partition'] },
+    { title:'Management & Network', color:'#f06292', cmds:['show ip interface','show ip route','show ntp','show snmp','show ssh server'] },
+    { title:'Configuration', color:'#ba68c8', cmds:['show running-config','show images'] },
+    { title:'Logs & Debug', color:'#ef5350', cmds:['show log files','show log continuous','show log matching ERR','show log matching WARN','show log matching INFO'] },
 ];
 
 const POOL = 6;             // max parallel switch sessions
