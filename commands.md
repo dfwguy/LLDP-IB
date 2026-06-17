@@ -18,12 +18,11 @@ scope.
 - MLNX-OS does **not** support shell pipes in the CLI (`show ... | tail` returns
   "Command not filterable"). Native filters such as `show log matching <regex>`
   are used instead.
-- On MLNX-OS 3.12 the `ib` keyword is the **`ibdiagnet` wrapper**, NOT a generic
-  prefix for individual ibutils. `ib sminfo`, `ib saquery`, `ib ibnetdiscover`,
-  `ib iblinkinfo`, `ib ibqueryerrors` do **not** work as standalone queries.
-  Fabric-wide data (topology, SM, links, P_Keys, transceivers, SHARP) therefore
-  comes from the **UFM REST API**; switch-local data (hardware, logs,
-  running-config) comes from `show ...`.
+- On MLNX-OS 3.12 the `ib` keyword is the **`ibdiagnet` wrapper**, not a generic
+  prefix for standalone ibutils. Fabric-wide data (topology, SM, links, P_Keys,
+  transceivers, SHARP) therefore comes from the **UFM REST API**, Local Fabric
+  Scan, or the Fabric Diagnostic page; switch-local data (hardware, logs,
+  running-config) comes from verified `show ...` commands.
 - SSH key auth to MLNX-OS requires an **RSA** key (`ssh client user admin
   authorized-key sshv2 "ssh-rsa ..."`); ed25519 is rejected by 3.12.
 - `ibdiagnet` is **on-demand by default**; it can be opt-in scheduled
@@ -86,12 +85,9 @@ Purpose:
 Source: `lldpq/ib-monitor.sh`
 
 > **Legacy.** This single-session SSH collection only runs in `ssh` mode and is
-> **disabled in `ufm`/`hybrid` mode** (it exits early). The fabric-wide `ib ...`
-> commands below assume standalone ibutils run from the CLI, which is **not** the
-> case on MLNX-OS 3.12 (where `ib` = ibdiagnet). On MLNX-OS + UFM these data sets
-> come from the UFM REST API instead — see
-> [UFM REST API Calls](#ufm-rest-api-calls). The section is kept for non-MLNX-OS
-> platforms and historical reference.
+> **disabled in `ufm`/`hybrid` mode** (it exits early). On MLNX-OS + UFM, fabric
+> data sets come from UFM REST / Local Fabric Scan / Fabric Diagnostic instead —
+> see [UFM REST API Calls](#ufm-rest-api-calls).
 
 Schedule (ssh mode): every 10 minutes via `/usr/local/bin/lldpq`, unless
 `LLDPQ_DEMO=true`.
@@ -172,67 +168,16 @@ Purpose:
 - temperature
 - DOM / cable diagnostics
 
-### Fabric Topology
+### Fabric-Wide Topology / SM / Counters
 
-```text
-ib ibnetdiscover -p
-```
+These are **not collected from per-switch MLNX-OS CLI** in the default hybrid
+mode. The correct data sources are:
 
-Purpose:
-
-- switch GUIDs
-- HCA GUIDs
-- LIDs
-- physical links
-- speeds
-
-### Link Info
-
-```text
-ib iblinkinfo --line
-```
-
-Purpose:
-
-- per-link state
-- link speed
-- peer relationships
-
-### Subnet Manager
-
-```text
-ib sminfo
-```
-
-Purpose:
-
-- Master SM
-- Standby SMs
-- SM state
-- SM priority
-- SM disagreement detection
-
-### Performance / Error Counters
-
-```text
-ib ibqueryerrors --details
-```
-
-Fallback:
-
-```text
-ib perfquery -a
-```
-
-Purpose:
-
-- LinkDownedCounter
-- SymbolErrorCounter
-- LinkErrorRecoveryCounter
-- PortRcvErrors
-- PortXmitDiscards
-- PortXmitWait
-- VL15Dropped
+- `lldpq/ufm-adapter.py` via UFM REST: topology, SM status, P_Key, SHARP,
+  transceivers, UFM-derived link health.
+- `lldpq/ib-local-scan.sh`: local in-container ibutils scan for topology,
+  SM, and real error counters when the container has direct UMAD access.
+- `lldpq/run-ibdiagnet.sh`: on-demand full fabric diagnostic on the UFM appliance.
 
 ### P_Key Partitions
 
@@ -251,53 +196,36 @@ Purpose:
 
 ### Multicast Groups
 
-```text
-Not available as a per-switch MLNX-OS CLI preset.
-```
+Source:
 
-Purpose:
+- Fabric Diagnostic (`ibdiagnet`) on the UFM appliance, on demand.
+- Not collected by cron in the current UFM 6.x REST-backed pipeline.
+
+Purpose when collected:
 
 - MGID
 - MLID
 - P_Key distribution
 - IPoIB / NCCL / MPI multicast visibility
 
-Notes:
-
-- MLNX-OS 3.12 treats `ib saquery -m` as ibdiagnet-wrapper input and prints
-  ibdiagnet usage, not multicast data.
-- UFM 6.x REST does not expose a multicast group endpoint in this environment.
-- Use on-demand `ibdiagnet` from Diagnostics for multicast/SA detail when needed.
-
 ### QoS Profiles
 
-```text
-Not available as a per-switch MLNX-OS CLI preset.
-```
+Source:
 
-Purpose:
+- Fabric Diagnostic (`ibdiagnet`) on the UFM appliance, on demand.
+- Not collected by cron in the current UFM 6.x REST-backed pipeline.
+
+Purpose when collected:
 
 - SL to VL mapping
 - QoS profile consistency
 
-Notes:
-
-- `show ib qos-profile` returns `% Unrecognized command` on the tested MLNX-OS
-  3.12 fabric.
-- UFM 6.x REST does not expose QoS / SL-to-VL resources in this environment.
-- Use on-demand `ibdiagnet` from Diagnostics for QoS/SL2VL detail when needed.
-
 ### SHARP
 
-```text
-show ib sharp aggregation-nodes
-```
+Source:
 
-Fallback text if unavailable:
-
-```text
-SHARP_NOT_AVAILABLE
-```
+- UFM REST via `lldpq/ufm-adapter.py`.
+- Rendered as `monitor-results/ib_sharp_status.json`.
 
 Purpose:
 
@@ -542,15 +470,9 @@ These presets back two surfaces and are kept in sync:
   single device, a role group, or **all switches** (client-side parallel fan-out)
 
 **All commands below were verified to return real output on MLNX-OS 3.12 switch CLI
-(interactive enable mode).** Two classes were intentionally removed because the CLI
-returns usage/help, not data:
-
-- `ib <util>` (`ib ibhosts` / `ib ibnetdiscover` / `ib iblinkinfo` / `ib ibqueryerrors` /
-  `ib saquery` / `ib perfquery`) — on MLNX-OS `ib` is an **ibdiagnet wrapper**, so these
-  print ibdiagnet usage. Fabric-wide IB data comes from UFM / the ibdiagnet Diagnostics page.
-- Linux shell reads (`ip link show`, `ip addr show`, `uptime`, `free -h`, `df -h`) and
-  `show ib qos-profile` / `show ib sharp aggregation-nodes` — the CLI returns
-  `% Unrecognized command` (shell reads need `_shell`, which is not exposed).
+(interactive enable mode).** Standalone ibutils, Linux shell reads, and unsupported
+IB subcommands are intentionally absent from this preset list. Fabric-wide IB data
+comes from UFM / Local Fabric Scan / the Fabric Diagnostic page.
 
 System & inventory:
 
@@ -673,43 +595,33 @@ Source:
 - `html/tracepath.html`
 - `html/ib-api.sh?action=ibtracert`
 
-Live trace command:
-
-```text
-ib ibtracert -G <src_guid> <dst_guid>
-```
-
 Notes:
 
-- Runs from the first reachable switch in `assets.ini`.
-- If live trace is unavailable, UI falls back to topology BFS from
-  `ib_topology.json`.
+- Live switch-side trace is not exposed on CLI-only MLNX-OS switches.
+- The UI computes the path from `ib_topology.json` (topology BFS).
+- For live fabric routing diagnostics, use the Fabric Diagnostic page
+  (`ibdiagnet` on the UFM appliance).
 
 ## Manual Diagnostics
 
 Source: `html/diagnostics.html`
 
-These commands are manual-only. They are never scheduled in cron.
-
-Safe presets:
+These diagnostics are manual-only. They are never scheduled in cron.
 
 Diagnostics now uses two IB-native paths:
 
-- **Local Fabric Scan** from the container: `ibnetdiscover`, `iblinkinfo`,
-  `sminfo`, `ibqueryerrors` (no switch SSH; requires direct UMAD access).
-- **Fabric Diagnostic**: remote `ibdiagnet` on the UFM appliance via SSH /
-  `docker exec`, parsed and retained as compact JSON.
-
-Heavy preset:
+- **Local Fabric Scan** from the container:
 
 ```text
-ib ibroute
+ibnetdiscover
+iblinkinfo
+sminfo
+ibqueryerrors
 ```
 
-Notes:
-
-- `ib ibroute` can generate large output.
-- Use it only for manual TAC/debug workflows.
+  No switch SSH is used; the container must have direct UMAD access.
+- **Fabric Diagnostic**: remote `ibdiagnet` on the UFM appliance via SSH /
+  `docker exec`, parsed and retained as compact JSON.
 
 ## Fabric Diagnostic (ibdiagnet)
 
