@@ -308,8 +308,9 @@ Purpose:
 ### Logs
 
 ```text
-show log files | head -20
-show log continuous | grep -E "ERR|WARN|FAIL|DOWN" | tail -50
+show log matching CRIT
+show log matching ERR
+show log matching WARN
 ```
 
 Purpose:
@@ -518,17 +519,38 @@ mlxfwmanager
 flint
 ```
 
-### Preset commands in Device Details
+### Preset commands in Device Details + Command Runner
+
+These presets back two surfaces and are kept in sync:
+
+- `html/device.html` "Command Runner" tab (single device, in the device context)
+- `html/cmd-runner.html` "Command Runner" page (sidebar: Devices > Commands) — runs on a
+  single device, a role group, or **all switches** (client-side parallel fan-out)
+
+**All commands below were verified to return real output on MLNX-OS 3.12 switch CLI
+(interactive enable mode).** Two classes were intentionally removed because the CLI
+returns usage/help, not data:
+
+- `ib <util>` (`ib ibhosts` / `ib ibnetdiscover` / `ib iblinkinfo` / `ib ibqueryerrors` /
+  `ib saquery` / `ib perfquery`) — on MLNX-OS `ib` is an **ibdiagnet wrapper**, so these
+  print ibdiagnet usage. Fabric-wide IB data comes from UFM / the ibdiagnet Diagnostics page.
+- Linux shell reads (`ip link show`, `ip addr show`, `uptime`, `free -h`, `df -h`) and
+  `show ib qos-profile` / `show ib sharp aggregation-nodes` — the CLI returns
+  `% Unrecognized command` (shell reads need `_shell`, which is not exposed).
 
 System and hardware:
 
 ```text
 show version
 show inventory
+show asic-version
+show module
+show images
 show power
 show fan
 show temperature
 show resources
+show health-report
 show clock
 ```
 
@@ -539,13 +561,13 @@ show interfaces ib status
 show interfaces ib link-diagnostics
 show interfaces ib transceiver
 show interfaces ib transceiver diagnostics
-show interfaces ib <port>
+show interfaces ib <port>                            # device.html port input only
 show interfaces ib <port> transceiver
 show interfaces ib <port> transceiver diagnostics
 show interfaces ib <port> counters
 ```
 
-Subnet Manager and topology (MLNX-OS native; the `ib <util>` forms are NOT used):
+Subnet Manager & P_Key (MLNX-OS native; the `ib <util>` forms are NOT used):
 
 ```text
 show ib sm
@@ -556,19 +578,28 @@ show ib partition
 > Fabric-wide SM/topology/links/P_Key data is read from the UFM REST API
 > (`ufm-adapter.py`), not from per-switch `ib ...` commands.
 
-Management shell reads:
+Management & network:
 
 ```text
-ip link show
-ip addr show
-uptime
-free -h
-df -h
+show ip interface
+show ip route
+show ntp
+show snmp
+show ssh server
+```
+
+Configuration:
+
+```text
+show running-config
+show images
 ```
 
 Logs (no shell pipes on MLNX-OS — native regex match only):
 
 ```text
+show log files
+show log continuous
 show log matching ERR
 show log matching WARN
 show log matching INFO
