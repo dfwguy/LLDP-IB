@@ -71,13 +71,37 @@ RUN mkdir -p /home/lldpq/lldpq/monitor-results/fabric-tables \
 COPY html/ /var/www/html/
 COPY VERSION /var/www/html/
 
-# Download Monaco Editor + js-yaml (not in repo, installed at runtime on native)
+# Download web UI JS dependencies that are intentionally not vendored in git.
+# Use npm registry tarballs where possible so fresh Docker builds are reproducible.
 RUN MONACO_VERSION="0.45.0" && TMP_DIR=$(mktemp -d) && \
     curl -sL "https://registry.npmjs.org/monaco-editor/-/monaco-editor-${MONACO_VERSION}.tgz" -o "$TMP_DIR/monaco.tgz" && \
     mkdir -p "$TMP_DIR/monaco" && \
     tar -xzf "$TMP_DIR/monaco.tgz" -C "$TMP_DIR/monaco" --strip-components=1 && \
     mkdir -p /var/www/html/monaco && \
     cp -r "$TMP_DIR/monaco/min/vs" /var/www/html/monaco/ && \
+    JSZIP_VERSION="3.10.1" && \
+    curl -sL "https://registry.npmjs.org/jszip/-/jszip-${JSZIP_VERSION}.tgz" -o "$TMP_DIR/jszip.tgz" && \
+    mkdir -p "$TMP_DIR/jszip" && \
+    tar -xzf "$TMP_DIR/jszip.tgz" -C "$TMP_DIR/jszip" --strip-components=1 && \
+    cp "$TMP_DIR/jszip/dist/jszip.min.js" /var/www/html/css/jszip.min.js && \
+    CYTOSCAPE_VERSION="3.28.1" && \
+    curl -sL "https://registry.npmjs.org/cytoscape/-/cytoscape-${CYTOSCAPE_VERSION}.tgz" -o "$TMP_DIR/cytoscape.tgz" && \
+    mkdir -p "$TMP_DIR/cytoscape" && \
+    tar -xzf "$TMP_DIR/cytoscape.tgz" -C "$TMP_DIR/cytoscape" --strip-components=1 && \
+    cp "$TMP_DIR/cytoscape/dist/cytoscape.min.js" /var/www/html/topology/cytoscape.min.js && \
+    CODEMIRROR_VERSION="5.65.16" && \
+    curl -sL "https://registry.npmjs.org/codemirror/-/codemirror-${CODEMIRROR_VERSION}.tgz" -o "$TMP_DIR/codemirror.tgz" && \
+    mkdir -p "$TMP_DIR/codemirror" && \
+    tar -xzf "$TMP_DIR/codemirror.tgz" -C "$TMP_DIR/codemirror" --strip-components=1 && \
+    cp "$TMP_DIR/codemirror/lib/codemirror.css" /var/www/html/css/codemirror.min.css && \
+    cp "$TMP_DIR/codemirror/theme/material-darker.css" /var/www/html/css/codemirror-theme.min.css && \
+    cp "$TMP_DIR/codemirror/addon/dialog/dialog.css" /var/www/html/css/codemirror-dialog.min.css && \
+    cp "$TMP_DIR/codemirror/lib/codemirror.js" /var/www/html/css/codemirror.min.js && \
+    cp "$TMP_DIR/codemirror/addon/dialog/dialog.js" /var/www/html/css/codemirror-dialog.min.js && \
+    cp "$TMP_DIR/codemirror/addon/search/searchcursor.js" /var/www/html/css/codemirror-searchcursor.min.js && \
+    cp "$TMP_DIR/codemirror/addon/search/search.js" /var/www/html/css/codemirror-search.min.js && \
+    cp "$TMP_DIR/codemirror/addon/search/jump-to-line.js" /var/www/html/css/codemirror-jump-to-line.min.js && \
+    cp "$TMP_DIR/codemirror/mode/yaml/yaml.js" /var/www/html/css/codemirror-yaml.min.js && \
     rm -rf "$TMP_DIR" && \
     curl -sL "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js" \
         -o /var/www/html/css/js-yaml.min.js

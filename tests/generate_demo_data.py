@@ -577,6 +577,22 @@ def make_log_summary():
     }
 
 
+def make_ib_logs_summary():
+    """Compact per-device log summary used by ib-logs.html in hybrid/UFM mode."""
+    devices = [
+        {"device": "ib-leaf-03", "critical": 0, "error": 1, "warning": 0, "info": 0, "total": 1},
+        {"device": "ib-leaf-05", "critical": 0, "error": 0, "warning": 1, "info": 0, "total": 1},
+        {"device": "ib-leaf-07", "critical": 0, "error": 0, "warning": 1, "info": 0, "total": 1},
+    ]
+    return {
+        "generated_at": now_iso(),
+        "source": "demo",
+        "note": "Actionable severities only (CRIT/ERR/WARN); INFO/NOTICE not collected to stay lightweight.",
+        "devices": devices,
+        "summary": {"total_devices": 8, "critical": 0, "error": 1, "warning": 2, "info": 0, "total": 3},
+    }
+
+
 def make_assets_ini(nodes):
     """assets.ini in the exact format ib-assets.sh writes (tab-separated, 7
     columns + header):
@@ -787,6 +803,7 @@ def write_all(target_dir: Path, web_root: Path | None):
         "ib_sharp_status.json":      make_sharp(nodes),
         "transceiver_inventory.json": make_transceivers(links),
         "log_summary.json":          make_log_summary(),
+        "ib_logs_summary.json":      make_ib_logs_summary(),
     }
 
     for name, data in bundles.items():

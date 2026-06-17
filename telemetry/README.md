@@ -1,5 +1,11 @@
 # LLDPq Streaming Telemetry
 
+> **Legacy / not used by LLDPq-IB.** This stack was inherited from the
+> Ethernet/Cumulus LLDPq project and expects Cumulus OTLP metrics. LLDPq-IB
+> currently gets fabric telemetry from UFM REST, Local Fabric Scan, and
+> on-demand ibdiagnet. Do not deploy this stack for MLNX-OS InfiniBand fabrics
+> unless it has been rewritten for IB-specific metrics.
+
 This directory contains the Docker Compose configuration for running the LLDPq telemetry stack.
 
 ## Components

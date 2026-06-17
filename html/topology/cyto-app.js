@@ -12,7 +12,7 @@ let currentLayout = 'dagre-tb'; // Default to Vertical layout
 
 const LINK_COLORS = {
     normal: '#aaaaaa',   // Light gray for normal links
-    missing: '#FF0000',  // Red for missing (LLDP down)
+    missing: '#FF0000',  // Red for expected IB wiring missing
     fail: '#FFED29',     // Yellow for unexpected
     dead: '#E40039',     // Dark red for dead
     new: '#148D09'       // Green for new
@@ -1179,10 +1179,10 @@ function toggleProblems(show) {
 }
 
 /**
- * Run LLDP check
+ * Refresh IB fabric data
  */
-function runLLDPCheck() {
-    const button = document.getElementById('runLLDPCheck');
+function runIBRefresh() {
+    const button = document.getElementById('runIBRefresh');
     button.disabled = true;
     button.textContent = '⏳ Running...';
     
@@ -1200,6 +1200,9 @@ function runLLDPCheck() {
         button.disabled = false;
     });
 }
+
+// Backward-compatible alias for older cached topology pages.
+function runLLDPCheck() { runIBRefresh(); }
 
 // CodeMirror editor instances
 let configEditorCM = null;
@@ -1258,7 +1261,7 @@ function closeConfigEditorModal() {
 }
 
 /**
- * Save config only (no LLDPq run)
+ * Save config only (no IB refresh)
  */
 function saveConfigOnly() {
     const status = document.getElementById('configEditorStatus');
@@ -1285,7 +1288,7 @@ function saveConfigOnly() {
 }
 
 /**
- * Save config and run LLDPq
+ * Save config and refresh IB fabric
  */
 function saveConfig() {
     const content = configEditorCM ? configEditorCM.getValue() : '';
@@ -1301,9 +1304,9 @@ function saveConfig() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            status.textContent = 'Saved! Running LLDPq...';
+            status.textContent = 'Saved! Refreshing IB fabric...';
             closeConfigEditorModal();
-            runLLDPCheck();
+            runIBRefresh();
         } else {
             status.textContent = 'Error: ' + (data.error || 'Save failed');
         }

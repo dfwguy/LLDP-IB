@@ -1,4 +1,4 @@
-# LLDPq Notification Configuration
+# LLDPq-IB Notification Configuration
 # Copyright (c) 2024 LLDPq Project - Licensed under MIT License
 #
 # =============================================================================
@@ -8,7 +8,7 @@
 # 🔹 SLACK (Detailed Steps):
 # 1. Go to https://api.slack.com/apps
 # 2. "Create New App" → "From scratch"
-# 3. App Name: "LLDPq" → Select your workspace → "Create App"
+# 3. App Name: "LLDPq-IB" → Select your workspace → "Create App"
 # 4. Left sidebar → "Incoming Webhooks" → Toggle "Activate Incoming Webhooks" to ON
 # 5. Click "Add New Webhook to Workspace" 
 # 6. Slack will ask for permissions → Click "Allow"
@@ -30,20 +30,20 @@ notifications:
   enabled: false
   # 🔗 SERVER URL - Fix for broken device links in alerts
   # which don't work from other machines. Now uses your actual server IP.
-  server_url: "http://100.64.1.1"  # ⚠️ CHANGE TO YOUR LLDPQ SERVER IP
+  server_url: "http://100.64.1.1"  # ⚠️ CHANGE TO YOUR LLDPQ-IB SERVER IP
   # Examples:
   # • Internal network: "http://192.168.1.100"  
   # • VPN/corporate: "http://10.0.1.50"
   # • Public (if exposed): "http://your-domain.com"
-  # Links in alerts will be: {server_url}/monitor-results/DEVICE.html
+  # Links in alerts will be: {server_url}/device.html?device=DEVICE
   
   # Slack integration  
   slack:
     enabled: false
     webhook: ""
     # Example, webhook: "https://hooks.slack.[c]om/[s]ervices/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
-    channel: "#lldpq"
-    username: "LLDPq Bot"
+    channel: "#lldpq-ib"
+    username: "LLDPq-IB Bot"
     icon_emoji: ":warning:"
 
 # =============================================================================
@@ -63,13 +63,13 @@ thresholds:
     memory_usage_warning: 80   # % - Warning memory usage
     psu_efficiency_warning: 80 # % - Minimum PSU efficiency
     
-  # Network monitoring
+  # IB fabric monitoring
   network:
-    bgp_down_minutes: 5       # Minutes - BGP neighbor down threshold
-    link_flaps_per_hour: 10   # Count - Link flaps in 1 hour (warning)
-    link_flaps_critical: 20   # Count - Link flaps in 1 hour (critical)
-    optical_power_margin: 3   # dBm - Minimum optical power margin
-    ber_error_rate: 1e-12     # BER threshold for errors
+    ib_link_warning_ports: 1   # Count - IB ports in WARNING state
+    ib_link_critical_ports: 1  # Count - IB ports in CRITICAL state
+    sm_disagreements: 1        # Count - SM disagreement threshold
+    unreachable_switches: 1    # Count - SSH unreachable switch threshold
+    critical_log_entries: 1    # Count - critical/error log threshold
     
   # System monitoring  
   system:
@@ -99,7 +99,9 @@ alert_strategy:
   always_immediate:
     - "cpu_temp_critical"            # CPU over 85°C (hardware failure risk)
     - "asic_temp_critical"           # ASIC over 90°C (switch could fail)  
-    - "bgp_neighbors_down"           # BGP down (network connectivity lost)
+    - "sm_no_master"                 # IB fabric has no Subnet Manager master
+    - "ib_link_errors_critical"      # IB ports with critical link errors
+    - "switch_unreachable"           # Switch SSH unreachable
     - "fan_critical_failure"         # Fan stopped (cooling failure)
   # Note: These bypass summary mode and send individual device alerts
   
@@ -139,9 +141,9 @@ frequency:
 
 alert_types:
   hardware_alerts: true      # CPU/ASIC temp, fans, PSU, memory
-  network_alerts: true       # BGP, link flaps, optical power
+  network_alerts: true       # SM master, IB link errors, switch reachability
   system_alerts: true        # Disk, load, uptime
-  topology_alerts: true      # LLDP mismatches
+  topology_alerts: true      # IB wiring / expected topology mismatches
   log_alerts: true           # Critical system logs
   
 # =============================================================================
@@ -168,7 +170,7 @@ templates:
 # 📊 WHAT YOU'LL GET:
 # • Summary mode: 1 clean dashboard-style message instead of 70+ spam alerts
 # • Smart scheduling: Morning (9 AM) and evening (5 PM) health summaries  
-# • Critical bypass: Immediate alerts for CPU/ASIC overheating, BGP down, fan failures
+# • Critical bypass: Immediate alerts for CPU/ASIC overheating, SM loss, IB link errors, fan failures
 # • Working links: Device links in alerts work from any machine (not just localhost)
 # • Rate limiting: Same alert won't spam - waits 30 minutes between repeats
 # • Recovery alerts: Get notified when problems are resolved

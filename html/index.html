@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head>
-    <link rel="shortcut icon" href="/png/favicon.ico">
+    <link rel="shortcut icon" href="/png/lldpq-logo.svg">
     <title>..::LLDPQ-IB::..</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" type="text/css" href="/css/main_styles.css">
@@ -411,9 +411,9 @@
             </svg>
         </button>
         
-        <div class="logo-section" onclick="showAboutModal()" style="cursor:pointer;" title="About LLDPq">
-            <img src="/png/lldpq-logo.png" alt="LLDPq" class="logo-full">
-            <img src="/png/lldpq-logo.png" alt="LLDPq" class="logo-icon">
+        <div class="logo-section" onclick="showAboutModal()" style="cursor:pointer;" title="About LLDPq-IB">
+            <img src="/png/lldpq-logo.svg" alt="LLDPq-IB" class="logo-full">
+            <img src="/png/lldpq-logo.svg" alt="LLDPq-IB" class="logo-icon">
         </div>
         
         <!-- User Menu -->
@@ -421,7 +421,7 @@
 
         <!-- Group 1: Main Dashboard -->
         <div class="menu-group group-main">
-            <div class="group-title">LLDPq</div>
+            <div class="group-title">LLDPq-IB</div>
             <a href="start.html" target="content-iframe" class="menu-item" title="Main Dashboard">
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M13,3V9H21V3M13,21H21V11H13M3,21H11V15H3M3,13H11V3H3V13Z"/></svg></span>
                 <span class="menu-text">Fabric</span>
@@ -451,7 +451,7 @@
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M19.43,12.98C19.47,12.66 19.5,12.34 19.5,12C19.5,11.66 19.47,11.33 19.42,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.29,4.96 19.06,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.88,5.07L14.5,2.42C14.47,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.94,5.05C4.71,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.58,11C4.53,11.33 4.5,11.66 4.5,12C4.5,12.34 4.53,12.66 4.57,12.98L2.45,14.63C2.26,14.78 2.21,15.05 2.33,15.27L4.33,18.73C4.45,18.95 4.7,19.04 4.93,18.95L7.43,17.95C7.95,18.34 8.5,18.68 9.12,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.47,21.82 14.5,21.58L14.88,18.93C15.5,18.68 16.04,18.34 16.56,17.95L19.06,18.95C19.29,19.04 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.98M12,15.5A3.5,3.5 0 1,1 12,8A3.5,3.5 0 0,1 12,15.5Z"/></svg></span>
                 <span class="menu-text">Setup</span>
             </a>
-            <a href="provision.html" title="Provision - ZTP & Base Config" target="content-iframe" class="menu-item admin-only-menu">
+            <a href="provision.html" title="Provision - ZTP & SSH setup" target="content-iframe" class="menu-item admin-only-menu">
                 <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg></span>
                 <span class="menu-text">Provision</span>
             </a>
@@ -562,7 +562,7 @@
         <div class="footer-wrapper">
             <div class="footer">
             <h3>
-                <span id="version-display" onclick="showAboutModal()" style="cursor:pointer;" title="About LLDPq">LLDPq</span>
+                <span id="version-display" onclick="showAboutModal()" style="cursor:pointer;" title="About LLDPq-IB">LLDPq-IB</span>
                 <a href="#" id="update-badge" onclick="showUpdateInfo(); return false;" style="display: none; background: linear-gradient(0deg, #ff6b00 0%, #ff8c00 100%); color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; text-decoration: none; margin-left: 8px; vertical-align: middle;">
                     <span id="update-text">v1.3.1</span>
                 </a>
@@ -672,7 +672,7 @@
                 document.getElementById('version-display').textContent = 'LLDPq-IB v' + localVersion;
             })
             .catch(() => {
-                document.getElementById('version-display').textContent = 'LLDPq';
+                document.getElementById('version-display').textContent = 'LLDPq-IB';
             });
         
         // Check for updates from GitHub
@@ -804,8 +804,8 @@ cd ~/lldpq-ib-src &amp;&amp; git pull &amp;&amp; docker build -t lldpq-ib:latest
     <div id="about-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:10000; justify-content:center; align-items:center;" onclick="if(event.target===this)closeAboutModal()">
         <div style="background:#2d2d2d; border-radius:12px; width:380px; max-width:90%; box-shadow:0 10px 40px rgba(0,0,0,0.5); overflow:hidden;">
             <div style="padding:30px 30px 20px; text-align:center;">
-                <img src="/png/lldpq-banner.png" alt="LLDPq" style="width:100%; border-radius:8px; margin-bottom:20px;">
-                <div style="font-size:28px; font-weight:700; color:#fff; letter-spacing:-0.5px;">LLDPq</div>
+                <img src="/png/lldpq-banner.svg" alt="LLDPq-IB" style="width:100%; border-radius:8px; margin-bottom:20px;">
+                <div style="font-size:28px; font-weight:700; color:#fff; letter-spacing:-0.5px;">LLDPq-IB</div>
                 <div id="about-version" style="font-size:13px; color:#76b900; margin-top:4px;"></div>
                 <div style="font-size:13px; color:#888; margin-top:8px;">Network Monitoring for NVIDIA InfiniBand Fabrics (MLNX-OS)</div>
             </div>

@@ -49,7 +49,7 @@ show_usage() {
     echo -e "\e[96mOPTIONS:\e[0m"
     echo -e "  \e[33m-r <role>\e[0m     Filter by role (e.g., spine, leaf, border)"
     echo -e "  \e[33m-f <file>\e[0m     Use custom devices.yaml file (overrides default)"
-    echo -e "  \e[33m-v <vrf>\e[0m      Use VRF for ping commands"
+    echo -e "  \e[33m-v <vrf>\e[0m      Ignored in LLDPq-IB (kept for compatibility)"
     echo -e "  \e[33m--roles\e[0m       List available roles from devices.yaml"
     echo -e "  \e[33m-h, --help\e[0m    Show this help message"
     echo ""
@@ -58,7 +58,6 @@ show_usage() {
     echo ""
     echo -e "\e[96mIP RANGE:\e[0m"
     echo -e "  Ping all IPs in a range:  \e[33mpping 192.168.58.10 192.168.58.240\e[0m"
-    echo -e "  With VRF:                 \e[33mpping -v mgmt 10.0.0.1 10.0.0.50\e[0m"
     echo ""
     echo -e "\e[96mROLES:\e[0m"
     echo -e "  Add @role in devices.yaml:  \e[33m10.10.100.10: Spine1 @spine\e[0m"
@@ -72,7 +71,6 @@ show_usage() {
     echo -e "  \e[32mpping\e[0m                              # Ping all devices"
     echo -e "  \e[32mpping 192.168.1.1 192.168.1.254\e[0m    # Ping IP range"
     echo -e "  \e[32mpping -r spine\e[0m                     # Ping only @spine devices"
-    echo -e "  \e[32mpping -r leaf -v mgmt\e[0m              # Ping @leaf via mgmt VRF"
     echo -e "  \e[32mpping --roles\e[0m                      # List available roles"
     echo -e "  \e[32mpping -f custom.txt\e[0m                # Use custom file"
     echo ""
@@ -206,16 +204,11 @@ load_ip_list() {
 
 command_maker() {
     local entries=("$@")
-    local vrf="$vrf_name"
     commands=()
     for entry in "${entries[@]}"; do
         hostname=$(echo "$entry" | cut -d' ' -f1)
         ip=$(echo "$entry" | cut -d' ' -f2)
-        if [[ -n "$vrf" ]]; then
-            command="timeout $timeout vrf task exec $vrf ping -c$count $ip"
-        else
-            command="timeout $timeout ping -c$count $ip"
-        fi
+        command="timeout $timeout ping -c$count $ip"
         commands+=("$command")
     done
 }
@@ -264,11 +257,7 @@ full_ping() {
         local hostname=$(echo "${ip_list[i]}" | cut -d' ' -f1)
         local ip=$(echo "${ip_list[i]}" | cut -d' ' -f2)
         
-        if [[ -n "$vrf_name" ]]; then
-            echo -e "\e[32mPinging:\e[0m \e[1m${hostname} [${ip}] [VRF: ${vrf_name}]\e[0m"
-        else
-            echo -e "\e[32mPinging:\e[0m \e[1m${hostname} [${ip}]\e[0m"
-        fi
+        echo -e "\e[32mPinging:\e[0m \e[1m${hostname} [${ip}]\e[0m"
         
         # Start ping in background
         process_ping "$hostname" "$cmd" "$ip" "$temp_results" &
@@ -382,6 +371,10 @@ main() {
         esac
     done
     shift $((OPTIND-1))
+
+    if [[ -n "${vrf_name:-}" ]]; then
+        echo -e "\e[33mNote:\e[0m -v/VRF is ignored in LLDPq-IB; using plain container ping."
+    fi
     
     # Check for IP range arguments (remaining positional args)
     if [[ $# -eq 2 ]]; then

@@ -172,7 +172,7 @@ execute_commands_optimized() {
         # which is faster across the fabric. Falls back to perfquery -a.
         # =====================================================================
         echo "===IB_PERFQUERY_START==="
-        ib ibqueryerrors --details 2>/dev/null || ib perfquery -a 2>/dev/null
+        echo "IBUTILS_NOT_AVAILABLE_ON_MLNX_OS_CLI"
         echo "===IB_PERFQUERY_END==="
         
         # =====================================================================
@@ -186,21 +186,21 @@ execute_commands_optimized() {
         # SECTION 12: Multicast groups (saquery -m)
         # =====================================================================
         echo "===IB_MULTICAST_START==="
-        ib saquery -m 2>/dev/null
+        echo "MULTICAST_NOT_AVAILABLE_VIA_SWITCH_CLI"
         echo "===IB_MULTICAST_END==="
         
         # =====================================================================
         # SECTION 13: QoS profiles (Service Level / VL mapping)
         # =====================================================================
         echo "===IB_QOS_START==="
-        show ib qos-profile 2>/dev/null
+        echo "QOS_NOT_AVAILABLE_VIA_SWITCH_CLI"
         echo "===IB_QOS_END==="
         
         # =====================================================================
         # SECTION 14: SHARP aggregation nodes (auto-detected; empty if disabled)
         # =====================================================================
         echo "===IB_SHARP_START==="
-        show ib sharp aggregation-nodes 2>/dev/null || echo "SHARP_NOT_AVAILABLE"
+        echo "SHARP_NOT_AVAILABLE_VIA_SWITCH_CLI"
         echo "===IB_SHARP_END==="
         
         # =====================================================================

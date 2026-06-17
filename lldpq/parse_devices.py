@@ -66,7 +66,7 @@ def parse_inline_role(value):
 def get_all_devices(config):
     """Parse all devices from config, returns list of (ip, username, hostname, role)"""
     defaults = config.get('defaults', {})
-    default_username = defaults.get('username', 'cumulus')
+    default_username = defaults.get('username', 'admin')
     
     devices = config.get('devices', {})
     if not devices:

@@ -521,6 +521,10 @@ print(json.dumps({
 PYTHON_END
         ;;
 
+    start-live-capture|start-log-tail|start-clsupport|download-file)
+        echo '{"success": false, "error": "This legacy Ethernet action is not supported in the IB edition. Use Command Runner, Device Logs, Local Fabric Scan, or Fabric Diagnostic instead."}'
+        ;;
+
     *)
         echo "{\"success\": false, \"error\": \"Unknown action: ${ACTION}\"}"
         ;;

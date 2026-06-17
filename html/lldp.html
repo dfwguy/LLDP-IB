@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <link rel="shortcut icon" href="/png/favicon.ico">
-    <title>..::LLDPQ-IB:: Discovery Results</title>
+    <link rel="shortcut icon" href="/png/lldpq-logo.svg">
+    <title>..::LLDPQ-IB:: IB Wiring</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link rel="stylesheet" href="css/lldpq-ib.css">
     <script src="css/auth.js"></script>
@@ -523,7 +523,7 @@ function escapeHtml(s) {
 
 // ---------- CSV download ----------
 // If any rows are selected (checked), export exactly those. Otherwise fall back
-// to the current filtered view. Matches the LLDPq "select problems -> download" flow.
+// to the current filtered view. Matches the "select problems -> download" flow.
 function downloadCSV() {
     const rows = selectedKeys.size > 0
         ? allRows.filter(r => selectedKeys.has(rowKey(r)))

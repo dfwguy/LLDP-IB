@@ -2,7 +2,7 @@
 """
 Process IB QoS profile data collected by ib-monitor.sh
 
-Parses MLNX-OS 'show ib qos-profile' output to aggregate Service Level (SL)
+Parses legacy MLNX-OS QoS-profile text to aggregate Service Level (SL)
 to Virtual Lane (VL) mappings and QoS profiles across switches.
 
 Copyright (c) 2024-2026 LLDPq Project
@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 
 
-# MLNX-OS 'show ib qos-profile' output (varies between versions). Approximate form:
+# Legacy MLNX-OS QoS-profile text (varies between versions). Approximate form:
 #
 #   Profile Name : default
 #       Traffic Class: 0
@@ -36,7 +36,7 @@ _SL2VL_RE   = re.compile(r'^\s*SL\s+(\d+)\s*->\s*VL\s+(\d+)', re.IGNORECASE)
 
 
 def parse_qos(filepath):
-    """Parse 'show ib qos-profile' output into a list of profile dicts."""
+    """Parse legacy QoS-profile text into a list of profile dicts."""
     if not os.path.exists(filepath):
         return []
     

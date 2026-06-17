@@ -39,8 +39,9 @@ json_err() {
     exit 0
 }
 
-# Quick guard: most actions require UFM configured
-if [ -z "$UFM_URL" ] && [ "$ACTION" != "status" ]; then
+# Quick guard: most actions require UFM configured. Configuration actions must
+# remain available on first boot, before UFM_URL exists in /etc/lldpq.conf.
+if [ -z "$UFM_URL" ] && [ "$ACTION" != "status" ] && [ "$ACTION" != "get-config" ] && [ "$ACTION" != "save-config" ]; then
     json_err "UFM is not configured. Set UFM_URL and UFM_TOKEN environment variables."
 fi
 

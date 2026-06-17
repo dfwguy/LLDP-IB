@@ -21,9 +21,6 @@ services:
       # - ./topology.dot:/var/www/html/topology.dot
       # - ./topology_config.yaml:/var/www/html/topology_config.yaml
 
-      # Optional: Ansible directory (enables VLAN/BGP reports, Fabric Config/Editor/Deploy)
-      # - ~/ansible:/home/lldpq/ansible:rw
-
       # Persistent monitoring data (survives container restart/recreation)
       - lldpq-data:/home/lldpq/lldpq/monitor-results
       - lldpq-configs:/var/www/html/configs
@@ -31,8 +28,8 @@ services:
     restart: unless-stopped
     environment:
       - TZ=${TZ:-UTC}
-      # Uncomment if mounting Ansible directory:
-      # - ANSIBLE_DIR=/home/lldpq/ansible
+      # Optional UFM integration is normally set from the Setup / UFM UI.
+      # You can also pass UFM_URL / UFM_USERNAME / UFM_PASSWORD here if desired.
 
 volumes:
   lldpq-data:      # Monitoring results

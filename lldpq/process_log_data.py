@@ -329,7 +329,7 @@ class LogAnalyzer:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Log Analysis Results</title>
-    <link rel="shortcut icon" href="/png/favicon.ico">
+    <link rel="shortcut icon" href="/png/lldpq-logo.svg">
     <link rel="stylesheet" type="text/css" href="/css/select2.min.css">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}

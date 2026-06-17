@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>..::LLDPQ-IB::..</title>
-    <link rel="shortcut icon" href="/png/favicon.ico">
+    <link rel="shortcut icon" href="/png/lldpq-logo.svg">
     <script src="/css/auth.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -331,7 +331,7 @@
             <div class="main-title">LLDPq InfiniBand Edition</div>
             <div class="subtitle">Fabric Overview — Subnet Manager · Topology · Link Health</div>
             <div class="lldpq-logo">
-                <img src="/png/lldpq-banner.png" alt="LLDPq-IB" onerror="this.style.display='none'">
+                <img src="/png/lldpq-banner.svg" alt="LLDPq-IB" onerror="this.style.display='none'">
             </div>
             <div class="last-updated" id="last-updated">Loading...</div>
         </div>
@@ -615,26 +615,26 @@
             </div>
         </div>
 
-        <!-- Logs summary (process_log_data) -->
+        <!-- Logs summary (ib-hw-collect / ib_logs_summary.json) -->
         <div class="dashboard-section">
-            <div class="section-title" onclick="navTo('/monitor-results/log-analysis.html')">
+            <div class="section-title" onclick="navTo('/ib-logs.html')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                 Recent Log Severity
             </div>
             <div class="summary-grid" id="log-cards">
-                <div class="summary-card card-critical" onclick="navTo('/monitor-results/log-analysis.html')">
+                <div class="summary-card card-critical" onclick="navTo('/ib-logs.html')">
                     <div class="card-value status-critical" id="log-critical">--</div>
                     <div class="card-label">Critical</div>
                 </div>
-                <div class="summary-card card-critical" onclick="navTo('/monitor-results/log-analysis.html')">
+                <div class="summary-card card-critical" onclick="navTo('/ib-logs.html')">
                     <div class="card-value status-critical" id="log-error">--</div>
                     <div class="card-label">Error</div>
                 </div>
-                <div class="summary-card card-warning" onclick="navTo('/monitor-results/log-analysis.html')">
+                <div class="summary-card card-warning" onclick="navTo('/ib-logs.html')">
                     <div class="card-value status-warning" id="log-warning">--</div>
                     <div class="card-label">Warning</div>
                 </div>
-                <div class="summary-card card-info" onclick="navTo('/monitor-results/log-analysis.html')">
+                <div class="summary-card card-info" onclick="navTo('/ib-logs.html')">
                     <div class="card-value status-info" id="log-info">--</div>
                     <div class="card-label">Info</div>
                 </div>
@@ -684,7 +684,7 @@
             const qos = await fetchJson('/monitor-results/ib_qos.json');
             const sharp = await fetchJson('/monitor-results/ib_sharp_status.json');
             const transceivers = await fetchJson('/monitor-results/transceiver_inventory.json');
-            const logSummary = await fetchJson('/monitor-results/log_summary.json');
+            const logSummary = await fetchJson('/monitor-results/ib_logs_summary.json');
             const health = await fetchJson('/monitor-results/fabric_health.json');
 
             renderHealth(health);
@@ -768,10 +768,11 @@
 
             // ---- Logs summary
             if (logSummary) {
-                setText('log-critical', logSummary.critical ?? 0);
-                setText('log-error',    logSummary.error ?? 0);
-                setText('log-warning',  logSummary.warning ?? 0);
-                setText('log-info',     logSummary.info ?? 0);
+                const ls = logSummary.summary || logSummary;
+                setText('log-critical', ls.critical ?? 0);
+                setText('log-error',    ls.error ?? 0);
+                setText('log-warning',  ls.warning ?? 0);
+                setText('log-info',     ls.info ?? 0);
             } else {
                 ['log-critical','log-error','log-warning','log-info'].forEach(id => setText(id, '--'));
             }

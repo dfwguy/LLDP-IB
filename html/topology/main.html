@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>..::LLDPQ::..</title>
-    <link rel="shortcut icon" href="/png/favicon.ico">
+    <title>..::LLDPQ-IB:: Topology</title>
+    <link rel="shortcut icon" href="/png/lldpq-logo.svg">
 
     <!-- Icon font -->
     <link rel="stylesheet" href="next-icons.css">
@@ -451,7 +451,7 @@
 </head>
 <body>
     <div class="toolbar">
-        <button onclick="runLLDPCheck()" id="runLLDPCheck">▶ Run LLDPq</button>
+        <button onclick="runIBRefresh()" id="runIBRefresh">▶ Refresh IB Fabric</button>
         <button onclick="openConfigEditor()" id="btn-edit-order" style="display: none;">⚙ Edit Order</button>
         <button onclick="location.reload()">↻ Refresh</button>
         <button onclick="setLayout('dagre-lr')" id="btn-hlr">→ Horizontal</button>
@@ -730,7 +730,7 @@
                     <div>
                         <button onclick="closeConfigEditorModal()" style="background: #555; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 10px;">Cancel</button>
                         <button onclick="saveConfigOnly()" style="background: #607d8b; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 10px;">Save</button>
-                        <button onclick="saveConfig()" style="background: #76b900; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Save & Run LLDPq</button>
+                        <button onclick="saveConfig()" style="background: #76b900; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Save & Refresh IB Fabric</button>
                     </div>
                 </div>
             </div>

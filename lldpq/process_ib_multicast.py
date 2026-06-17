@@ -2,7 +2,7 @@
 """
 Process IB Multicast Groups data collected by ib-monitor.sh
 
-Parses 'ib saquery -m' output and aggregates multicast group membership.
+Parses legacy SA multicast text output and aggregates multicast group membership.
 Used to track IPoIB / MPI / NCCL multicast groups across the fabric.
 
 Multicast groups are SM-managed and fabric-wide, so we can use any single
@@ -18,7 +18,7 @@ import json
 from datetime import datetime
 
 
-# 'ib saquery -m' output (one block per multicast group):
+# Legacy SA multicast output (one block per multicast group):
 #
 #   MCMemberRecord group dump:
 #       MGID....................ff12:401b:ffff:0000:0000:0000:ffff:ffff
@@ -37,7 +37,7 @@ _GROUP_HEADER_RE = re.compile(r'MCMemberRecord\s+group\s+dump', re.IGNORECASE)
 
 
 def parse_multicast(filepath):
-    """Parse 'ib saquery -m' output. Returns list of multicast group dicts."""
+    """Parse legacy SA multicast text. Returns list of multicast group dicts."""
     if not os.path.exists(filepath):
         return []
     

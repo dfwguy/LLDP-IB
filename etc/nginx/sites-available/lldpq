@@ -224,7 +224,7 @@ server {
             fastcgi_buffering off;
         }
         
-        # Provision API endpoint (ZTP + Base Config)
+        # Provision API endpoint (MLNX-OS ZTP + SSH setup)
         location = /provision-api.sh {
             fastcgi_pass unix:/var/run/fcgiwrap.socket;
             fastcgi_param SCRIPT_FILENAME /var/www/html/provision-api.sh;

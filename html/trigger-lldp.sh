@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# LLDP Web Trigger Script
-# Called by nginx via fcgiwrap
+# IB discovery refresh trigger.
+# Called by nginx via fcgiwrap. The historical /trigger-lldp endpoint and
+# /tmp/.lldp_web_trigger filename are kept for compatibility with lldpq-trigger.
 
 source "$(dirname "$0")/auth-guard.sh"
 require_admin
@@ -23,7 +24,7 @@ echo "$(date +%s)" > "$TRIGGER_FILE" 2>/dev/null
 
 # Return JSON response
 if [ -f "$TRIGGER_FILE" ]; then
-    echo '{"status": "started", "message": "LLDP check triggered automatically", "note": "Analysis will complete within 1 minute."}'
+    echo '{"status": "started", "message": "IB fabric refresh triggered", "note": "Analysis will complete within 1 minute."}'
 else
     echo '{"status": "error", "message": "Failed to create trigger file"}'
 fi

@@ -252,7 +252,7 @@ Purpose:
 ### Multicast Groups
 
 ```text
-ib saquery -m
+Not available as a per-switch MLNX-OS CLI preset.
 ```
 
 Purpose:
@@ -262,16 +262,30 @@ Purpose:
 - P_Key distribution
 - IPoIB / NCCL / MPI multicast visibility
 
+Notes:
+
+- MLNX-OS 3.12 treats `ib saquery -m` as ibdiagnet-wrapper input and prints
+  ibdiagnet usage, not multicast data.
+- UFM 6.x REST does not expose a multicast group endpoint in this environment.
+- Use on-demand `ibdiagnet` from Diagnostics for multicast/SA detail when needed.
+
 ### QoS Profiles
 
 ```text
-show ib qos-profile
+Not available as a per-switch MLNX-OS CLI preset.
 ```
 
 Purpose:
 
 - SL to VL mapping
 - QoS profile consistency
+
+Notes:
+
+- `show ib qos-profile` returns `% Unrecognized command` on the tested MLNX-OS
+  3.12 fabric.
+- UFM 6.x REST does not expose QoS / SL-to-VL resources in this environment.
+- Use on-demand `ibdiagnet` from Diagnostics for QoS/SL2VL detail when needed.
 
 ### SHARP
 
@@ -679,13 +693,12 @@ These commands are manual-only. They are never scheduled in cron.
 
 Safe presets:
 
-```text
-ib sminfo
-ib iblinkinfo --line
-ib ibqueryerrors --details
-ib saquery -m
-ib ibnetdiscover -p
-```
+Diagnostics now uses two IB-native paths:
+
+- **Local Fabric Scan** from the container: `ibnetdiscover`, `iblinkinfo`,
+  `sminfo`, `ibqueryerrors` (no switch SSH; requires direct UMAD access).
+- **Fabric Diagnostic**: remote `ibdiagnet` on the UFM appliance via SSH /
+  `docker exec`, parsed and retained as compact JSON.
 
 Heavy preset:
 
