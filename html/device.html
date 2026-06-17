@@ -904,25 +904,49 @@
     <div class="tab-content" id="tab-commands">
         <div class="command-section">
             <div class="command-groups-grid">
-            <!-- System & Hardware (MLNX-OS) -->
+            <!-- System & Inventory -->
             <div class="command-group collapsed">
                 <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#76b900" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                    <span style="color: #76b900;">System & Hardware</span>
+                    <span style="color: #76b900;">System & Inventory</span>
                 </div>
                 <div class="command-group-content">
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show version')">show version</button>
+                        <button class="cmd-btn" onclick="runCommand('show version concise')">show version concise</button>
+                        <button class="cmd-btn" onclick="runCommand('show system type')">show system type</button>
+                        <button class="cmd-btn" onclick="runCommand('show system profile')">show system profile</button>
+                        <button class="cmd-btn" onclick="runCommand('show system capabilities')">show system capabilities</button>
                         <button class="cmd-btn" onclick="runCommand('show inventory')">show inventory</button>
                         <button class="cmd-btn" onclick="runCommand('show asic-version')">show asic-version</button>
+                        <button class="cmd-btn" onclick="runCommand('show bios')">show bios</button>
+                        <button class="cmd-btn" onclick="runCommand('show cpld')">show cpld</button>
                         <button class="cmd-btn" onclick="runCommand('show module')">show module</button>
                         <button class="cmd-btn" onclick="runCommand('show images')">show images</button>
+                        <button class="cmd-btn" onclick="runCommand('show clock')">show clock</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hardware Health -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4db6ac" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                    <span style="color: #4db6ac;">Hardware Health</span>
+                </div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('show health-report')">show health-report</button>
                         <button class="cmd-btn" onclick="runCommand('show power')">show power</button>
+                        <button class="cmd-btn" onclick="runCommand('show power consumers')">show power consumers</button>
                         <button class="cmd-btn" onclick="runCommand('show fan')">show fan</button>
                         <button class="cmd-btn" onclick="runCommand('show temperature')">show temperature</button>
+                        <button class="cmd-btn" onclick="runCommand('show voltage')">show voltage</button>
+                        <button class="cmd-btn" onclick="runCommand('show leds')">show leds</button>
                         <button class="cmd-btn" onclick="runCommand('show resources')">show resources</button>
-                        <button class="cmd-btn" onclick="runCommand('show health-report')">show health-report</button>
-                        <button class="cmd-btn" onclick="runCommand('show clock')">show clock</button>
+                        <button class="cmd-btn" onclick="runCommand('show memory')">show memory</button>
+                        <button class="cmd-btn" onclick="runCommand('show stats cpu')">show stats cpu</button>
+                        <button class="cmd-btn" onclick="runCommand('show stats alarm')">show stats alarm</button>
                     </div>
                 </div>
             </div>
@@ -937,6 +961,7 @@
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show interfaces ib status')">show interfaces ib status</button>
                         <button class="cmd-btn" onclick="runCommand('show interfaces ib link-diagnostics')">show ib link-diagnostics</button>
+                        <button class="cmd-btn" onclick="runCommand('show interfaces ib llr')">show ib llr</button>
                         <button class="cmd-btn" onclick="runCommand('show interfaces ib transceiver')">show ib transceiver</button>
                         <button class="cmd-btn" onclick="runCommand('show interfaces ib transceiver diagnostics')">show ib transceiver diagnostics</button>
                     </div>
@@ -958,12 +983,16 @@
             <div class="command-group collapsed">
                 <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffb74d" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    <span style="color: #ffb74d;">Subnet Manager</span>
+                    <span style="color: #ffb74d;">Subnet Manager & Fabric</span>
                 </div>
                 <div class="command-group-content">
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show ib sm')">show ib sm</button>
                         <button class="cmd-btn" onclick="runCommand('show ib smnodes')">show ib smnodes</button>
+                        <button class="cmd-btn" onclick="runCommand('show protocols')">show protocols</button>
+                        <button class="cmd-btn" onclick="runCommand('show guids')">show guids</button>
+                        <button class="cmd-btn" onclick="runCommand('show lids')">show lids</button>
+                        <button class="cmd-btn" onclick="runCommand('show system guid')">show system guid</button>
                     </div>
                 </div>
             </div>
@@ -972,7 +1001,7 @@
             <div class="command-group collapsed">
                 <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ba68c8" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                    <span style="color: #ba68c8;">P_Key & QoS</span>
+                    <span style="color: #ba68c8;">P_Key</span>
                 </div>
                 <div class="command-group-content">
                     <div class="command-buttons">
@@ -991,9 +1020,14 @@
                     <div class="command-buttons">
                         <button class="cmd-btn" onclick="runCommand('show ip interface')">show ip interface</button>
                         <button class="cmd-btn" onclick="runCommand('show ip route')">show ip route</button>
+                        <button class="cmd-btn" onclick="runCommand('show ip dhcp')">show ip dhcp</button>
+                        <button class="cmd-btn" onclick="runCommand('show hosts')">show hosts</button>
+                        <button class="cmd-btn" onclick="runCommand('show interfaces mgmt0')">show interfaces mgmt0</button>
+                        <button class="cmd-btn" onclick="runCommand('show management-lldp neighbors')">show lldp neighbors</button>
                         <button class="cmd-btn" onclick="runCommand('show ntp')">show ntp</button>
                         <button class="cmd-btn" onclick="runCommand('show snmp')">show snmp</button>
                         <button class="cmd-btn" onclick="runCommand('show ssh server')">show ssh server</button>
+                        <button class="cmd-btn" onclick="runCommand('show users')">show users</button>
                     </div>
                 </div>
             </div>
@@ -1006,6 +1040,7 @@
                 </div>
                 <div class="command-group-content">
                     <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('show logging')">show logging</button>
                         <button class="cmd-btn" onclick="runCommand('show log files')">show log files</button>
                         <button class="cmd-btn" onclick="runCommand('show log continuous')">show log continuous</button>
                         <button class="cmd-btn" onclick="runCommand('show log matching ERR')">errors only</button>
@@ -1018,7 +1053,7 @@
             
             <!-- Custom Command -->
             <div class="custom-command">
-                <input type="text" id="customCmd" name="customCmd" autocomplete="on" placeholder="Enter MLNX-OS command (show ..., ib ...; pipes: | grep|head|tail|wc|awk)">
+                <input type="text" id="customCmd" name="customCmd" autocomplete="on" placeholder="Enter MLNX-OS command (show ..., ib ...)">
                 <button onclick="runCustomCommand()">Run</button>
             </div>
         </div>

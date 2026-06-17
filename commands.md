@@ -538,20 +538,37 @@ returns usage/help, not data:
   `show ib qos-profile` / `show ib sharp aggregation-nodes` — the CLI returns
   `% Unrecognized command` (shell reads need `_shell`, which is not exposed).
 
-System and hardware:
+System & inventory:
 
 ```text
 show version
+show version concise
+show system type
+show system profile
+show system capabilities
 show inventory
 show asic-version
+show bios
+show cpld
 show module
 show images
+show clock
+```
+
+Hardware health:
+
+```text
+show health-report
 show power
+show power consumers
 show fan
 show temperature
+show voltage
+show leds
 show resources
-show health-report
-show clock
+show memory
+show stats cpu
+show stats alarm
 ```
 
 IB interfaces:
@@ -559,6 +576,7 @@ IB interfaces:
 ```text
 show interfaces ib status
 show interfaces ib link-diagnostics
+show interfaces ib llr
 show interfaces ib transceiver
 show interfaces ib transceiver diagnostics
 show interfaces ib <port>                            # device.html port input only
@@ -567,12 +585,16 @@ show interfaces ib <port> transceiver diagnostics
 show interfaces ib <port> counters
 ```
 
-Subnet Manager & P_Key (MLNX-OS native; the `ib <util>` forms are NOT used):
+IB fabric & SM (MLNX-OS native; the `ib <util>` forms are NOT used):
 
 ```text
 show ib sm
 show ib smnodes
 show ib partition
+show protocols
+show guids
+show lids
+show system guid
 ```
 
 > Fabric-wide SM/topology/links/P_Key data is read from the UFM REST API
@@ -583,27 +605,37 @@ Management & network:
 ```text
 show ip interface
 show ip route
+show ip dhcp
+show hosts
+show interfaces mgmt0
+show management-lldp neighbors
 show ntp
 show snmp
 show ssh server
+show users
 ```
 
 Configuration:
 
 ```text
 show running-config
-show images
+show configuration
 ```
 
 Logs (no shell pipes on MLNX-OS — native regex match only):
 
 ```text
+show logging
 show log files
 show log continuous
 show log matching ERR
 show log matching WARN
 show log matching INFO
 ```
+
+> Intentionally excluded for size: `show log` (full syslog, can be >15 MB per switch) and
+> `show interfaces ib transceiver raw` (~170 KB/switch raw I2C). Use `show log continuous` /
+> `show log matching <sev>` and `show interfaces ib transceiver diagnostics` instead.
 
 Subnet Manager tab:
 

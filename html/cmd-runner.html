@@ -129,12 +129,13 @@
 // here: on MLNX-OS `ib` is an ibdiagnet wrapper, so they return ibdiagnet usage, not
 // query output. Fabric-wide IB data comes from UFM / the ibdiagnet Diagnostics page.
 const CMD_GROUPS = [
-    { title:'System & Hardware', color:'#76b900', cmds:['show version','show inventory','show asic-version','show module','show power','show fan','show temperature','show resources','show health-report','show clock'] },
-    { title:'IB Interfaces', color:'#4fc3f7', cmds:['show interfaces ib status','show interfaces ib link-diagnostics','show interfaces ib transceiver','show interfaces ib transceiver diagnostics'] },
-    { title:'Subnet Manager & P_Key', color:'#ffb74d', cmds:['show ib sm','show ib smnodes','show ib partition'] },
-    { title:'Management & Network', color:'#f06292', cmds:['show ip interface','show ip route','show ntp','show snmp','show ssh server'] },
-    { title:'Configuration', color:'#ba68c8', cmds:['show running-config','show images'] },
-    { title:'Logs & Debug', color:'#ef5350', cmds:['show log files','show log continuous','show log matching ERR','show log matching WARN','show log matching INFO'] },
+    { title:'System & Inventory', color:'#76b900', cmds:['show version','show version concise','show system type','show system profile','show system capabilities','show inventory','show asic-version','show bios','show cpld','show module','show images','show clock'] },
+    { title:'Hardware Health', color:'#4db6ac', cmds:['show health-report','show power','show power consumers','show fan','show temperature','show voltage','show leds','show resources','show memory','show stats cpu','show stats alarm'] },
+    { title:'IB Interfaces', color:'#4fc3f7', cmds:['show interfaces ib status','show interfaces ib link-diagnostics','show interfaces ib llr','show interfaces ib transceiver','show interfaces ib transceiver diagnostics'] },
+    { title:'IB Fabric & SM', color:'#ffb74d', cmds:['show ib sm','show ib smnodes','show ib partition','show protocols','show guids','show lids','show system guid'] },
+    { title:'Management & Network', color:'#f06292', cmds:['show ip interface','show ip route','show ip dhcp','show hosts','show interfaces mgmt0','show management-lldp neighbors','show ntp','show snmp','show ssh server','show users'] },
+    { title:'Configuration', color:'#ba68c8', cmds:['show running-config','show configuration'] },
+    { title:'Logs & Debug', color:'#ef5350', cmds:['show logging','show log files','show log continuous','show log matching ERR','show log matching WARN','show log matching INFO'] },
 ];
 
 const POOL = 6;             // max parallel switch sessions

@@ -386,3 +386,5 @@ sudo docker run -d --name lldpq-ib \
 
 ```
 
+sudo docker exec -it -u lldpq lldpq-ib bash
+
