@@ -111,6 +111,64 @@ def _load_json_safe(name):
     return None
 
 
+def _load_ib_logs():
+    """Return (totals, messages) for AI log context.
+
+    IB hybrid mode writes ib_logs_summary.json (per-switch severity counts) plus
+    raw per-switch lines in monitor-results/logs/<host>.log. Falls back to the
+    legacy log_summary.json schema (top_messages/recent_messages) on non-MLNX-OS.
+    """
+    summ = _load_json_safe('ib_logs_summary.json')
+    if summ:
+        s = summ.get('summary', {})
+        totals = {
+            'critical': s.get('critical', 0),
+            'error':    s.get('error', 0),
+            'warning':  s.get('warning', 0),
+            'info':     s.get('info', 0),
+        }
+        messages = {}
+        for base in (MONITOR_RESULTS_DIR, os.path.join(WEB_ROOT, 'monitor-results')):
+            logs_dir = os.path.join(base, 'logs')
+            if not os.path.isdir(logs_dir):
+                continue
+            for dev in summ.get('devices', []):
+                host = dev.get('device')
+                actionable = (dev.get('critical', 0) or 0) + (dev.get('error', 0) or 0) + (dev.get('warning', 0) or 0)
+                if not host or actionable == 0:
+                    continue
+                p = os.path.join(logs_dir, host + '.log')
+                if os.path.exists(p):
+                    try:
+                        with open(p, errors='replace') as f:
+                            lines = [ln.strip() for ln in f if ln.strip()][:30]
+                        if lines:
+                            messages[host] = lines
+                    except Exception:
+                        pass
+            break
+        return totals, messages
+
+    # Legacy (Ethernet / ssh-mode) fallback
+    legacy = _load_json_safe('log_summary.json')
+    if legacy:
+        totals = {
+            'critical': legacy.get('critical', 0),
+            'error':    legacy.get('error', 0),
+            'warning':  legacy.get('warning', 0),
+            'info':     legacy.get('info', 0),
+        }
+        msgs = legacy.get('recent_messages') or {}
+        if not msgs:
+            # synthesize from top_messages[] if present
+            for m in (legacy.get('top_messages') or []):
+                dev = m.get('device', '?')
+                msgs.setdefault(dev, []).append(f"{m.get('severity', '?').upper()}: {m.get('sample', '')}")
+        return totals, msgs
+
+    return {}, {}
+
+
 def build_fabric_summary():
     """Compact IB fabric summary -- one line per system, plus headline
     counts the LLM can quote without hallucinating.
@@ -151,7 +209,11 @@ def build_fabric_summary():
     role_summary = ', '.join(f"{count} {role}" for role, count in sorted(roles.items(), key=lambda x: -x[1]))
     summary.append(f"DEVICE INVENTORY: {len(devices)} devices ({role_summary or 'no roles declared'})")
 
-    # 2. Reachability from assets.ini (last col 1=reachable)
+    # 2. Inventory + reachability from assets.ini.
+    # IB schema (ib-assets.sh / ufm-adapter.py): tab-separated
+    #   hostname  IP  MODEL  SERIAL  RELEASE  OS  UPTIME
+    # There is NO trailing 1/0 status column (that was the Ethernet schema). A
+    # switch only appears here if it was successfully collected -> presence = ok.
     device_health = {}
     reachable = 0
     for base in (LLDPQ_DIR, WEB_ROOT):
@@ -161,26 +223,28 @@ def build_fabric_summary():
         try:
             with open(ai_path) as f:
                 for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
+                    line = line.rstrip('\n')
+                    if not line.strip() or line.startswith('#'):
                         continue
                     parts = line.split('\t')
                     if len(parts) >= 2:
-                        host = parts[0]
-                        status = parts[-1].strip()
+                        host = parts[0].strip()
                         device_health[host] = {
-                            'ip':       parts[1] if len(parts) > 1 else '',
-                            'model':    parts[2] if len(parts) > 2 else '',
-                            'serial':   parts[3] if len(parts) > 3 else '',
-                            'release':  parts[4] if len(parts) > 4 else '',
-                            'status':   'ok' if status == '1' else 'unreachable',
+                            'ip':       parts[1].strip() if len(parts) > 1 else '',
+                            'model':    parts[2].strip() if len(parts) > 2 else '',
+                            'serial':   parts[3].strip() if len(parts) > 3 else '',
+                            'release':  parts[4].strip() if len(parts) > 4 else '',
+                            'uptime':   parts[6].strip() if len(parts) > 6 else '',
+                            'status':   'ok',
                         }
-                        if status == '1':
-                            reachable += 1
+                        reachable += 1
             break
         except Exception:
             pass
-    summary.append(f"REACHABILITY: {reachable}/{len(device_health)} switches/HCAs responding (assets.ini)")
+    # Devices in inventory but absent from assets.ini were not collected (treat as unreachable).
+    for dev in devices.values():
+        device_health.setdefault(dev['hostname'], {'status': 'unreachable'})
+    summary.append(f"REACHABILITY: {reachable}/{len(devices)} switches collected (assets.ini); HCAs are not SSH-probed")
 
     # 3. Subnet Manager
     sm = _load_json_safe('ib_sm_status.json')
@@ -229,17 +293,24 @@ def build_fabric_summary():
                 f"rcv_err={p.get('rcv_errors', 0)} -- {p.get('note', '')}"
             )
 
-    # 6. P_Keys (IB partitions)
+    # 6. P_Keys (IB partitions). ufm-adapter writes pkeys as a LIST of dicts.
     pk = _load_json_safe('ib_pkey.json')
     if pk:
         s = pk.get('summary', {})
-        partitions = pk.get('pkeys') or {}
+        partitions = pk.get('pkeys') or []
+        if isinstance(partitions, dict):  # tolerate legacy dict form
+            partitions = [dict(v, pkey=k) for k, v in partitions.items()]
         summary.append(
-            f"P_KEYS: {s.get('partition_count', len(partitions))} partitions, "
-            f"{s.get('inconsistency_count', 0)} cross-device inconsistencies"
+            f"P_KEYS: {s.get('partition_count', s.get('total_pkeys', len(partitions)))} partitions, "
+            f"{s.get('inconsistency_count', s.get('inconsistencies', 0))} cross-device inconsistencies, "
+            f"{s.get('policy_violations', 0)} policy violations"
         )
-        for name, info in list(partitions.items())[:5]:
-            summary.append(f"  pkey {name}: {info.get('name', '')} ({info.get('member_count', 0)} members, {info.get('type', '')})")
+        for p in partitions[:5]:
+            names = ', '.join(p.get('names') or []) or '(unnamed)'
+            summary.append(
+                f"  pkey {p.get('pkey', '?')}: {names} "
+                f"({p.get('device_count', len(p.get('devices', [])))} devices, policy={p.get('policy_status', '?')})"
+            )
 
     # 7. Multicast
     mc = _load_json_safe('ib_multicast.json')
@@ -280,15 +351,16 @@ def build_fabric_summary():
             f"mixed-FW: {', '.join(mixed) if mixed else 'none'}"
         )
 
-    # 11. Logs
-    logs = _load_json_safe('log_summary.json')
-    if logs:
+    # 11. Logs (IB hybrid: ib_logs_summary.json + logs/<host>.log; legacy fallback)
+    log_totals, log_messages = _load_ib_logs()
+    if log_totals:
         summary.append(
-            f"LOGS: {logs.get('critical', 0)} critical, {logs.get('error', 0)} errors, "
-            f"{logs.get('warning', 0)} warnings, {logs.get('info', 0)} info"
+            f"LOGS: {log_totals.get('critical', 0)} critical, {log_totals.get('error', 0)} errors, "
+            f"{log_totals.get('warning', 0)} warnings, {log_totals.get('info', 0)} info"
         )
-        for m in (logs.get('top_messages') or [])[:3]:
-            summary.append(f"  {m.get('severity', '?').upper()} {m.get('device', '?')} x{m.get('count', '?')}: {m.get('sample', '')}")
+        for host, lines in list(log_messages.items())[:3]:
+            if lines:
+                summary.append(f"  {host}: {lines[0][:160]}")
 
     # 12. UFM (if reachable)
     try:
@@ -353,26 +425,151 @@ def build_device_detail(hostname, devices, device_health):
                     f"rcv_err={p.get('rcv_errors', 0)} -- {p.get('note', '')}"
                 )
 
-    # P_Key membership (which partitions this device belongs to)
+    # P_Key membership (which partitions this device belongs to).
+    # per_device entries are dicts like {"pkey": "0x7fff"}; tolerate plain strings.
     pk = _load_json_safe('ib_pkey.json')
     if pk:
         per_device = pk.get('per_device') or {}
         member_pkeys = per_device.get(hostname, [])
-        if member_pkeys:
-            detail.append(f"  P_KEY MEMBERSHIP: {', '.join(member_pkeys)}")
+        pkey_strs = [m.get('pkey', '') if isinstance(m, dict) else str(m) for m in member_pkeys]
+        pkey_strs = [s for s in pkey_strs if s]
+        if pkey_strs:
+            detail.append(f"  P_KEY MEMBERSHIP: {', '.join(pkey_strs)}")
 
     return '\n'.join(detail) if detail else f"Device '{hostname}' found but no detailed data available."
+
+
+def read_collected_config(hostname, max_chars=15000):
+    """Full collected running config for one switch (show running-config),
+    saved by get-configs.sh at WEB_ROOT/configs/<hostname>.txt."""
+    try:
+        path = os.path.join(WEB_ROOT, 'configs', f'{hostname}.txt')
+        if not os.path.isfile(path):
+            return ''
+        with open(path, 'r') as f:
+            cfg = f.read().strip()
+        if not cfg:
+            return ''
+        if len(cfg) > max_chars:
+            cfg = cfg[:max_chars] + f"\n... (truncated; {len(cfg)} chars total)"
+        return f"FULL RUNNING CONFIG -- {hostname} (show running-config):\n{cfg}"
+    except Exception:
+        return ''
+
+
+def build_all_collected_configs(devices=None, max_per_device=2500, max_total=120000):
+    """Phase 1: every collected running config on disk (truncated per device) for
+    fabric-wide config analysis / drift detection. Reads WEB_ROOT/configs/*.txt DIRECTLY
+    so it works even when devices.yaml hostnames differ from the collected config
+    filenames (written by get-configs.sh via `show running-config`)."""
+    config_dir = os.path.join(WEB_ROOT, 'configs')
+    if not os.path.isdir(config_dir):
+        return ''
+    out, total = [], 0
+    for path in sorted(glob.glob(os.path.join(config_dir, '*.txt'))):
+        hn = os.path.basename(path)[:-4]  # strip .txt
+        try:
+            with open(path, 'r') as f:
+                cfg = f.read().strip()
+        except Exception:
+            continue
+        if not cfg:
+            continue
+        block = cfg[:max_per_device]
+        if len(cfg) > max_per_device:
+            block += f"\n... (truncated; {len(cfg)} total)"
+        entry = f"----- {hn} -----\n{block}"
+        if total + len(entry) > max_total:
+            out.append("... (remaining switch configs omitted for length)")
+            break
+        out.append(entry)
+        total += len(entry)
+    if not out:
+        return ''
+    return ("FULL COLLECTED RUNNING CONFIGS (all switches, show running-config; "
+            "truncated per device):\n\n" + "\n\n".join(out))
+
+
+def _mr_path(*parts):
+    """Resolve a monitor-results file, preferring LLDPQ_DIR then the synced WEB_ROOT copy."""
+    p1 = os.path.join(LLDPQ_DIR, 'monitor-results', *parts)
+    if os.path.exists(p1):
+        return p1
+    return os.path.join(WEB_ROOT, 'monitor-results', *parts)
+
+
+def _load_json_file(path):
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def build_transceiver_context(hosts=None, max_chars=9000):
+    """Transceiver/cable inventory per module: vendor/part/serial/FW + health/temp, plus
+    summary. Reads transceiver_inventory.json (UFM cable_info via ufm-adapter.py)."""
+    inv = _load_json_file(_mr_path('transceiver_inventory.json'))
+    if not inv or not inv.get('modules'):
+        return ''
+    mods = [m for m in inv['modules'] if (not hosts or m.get('device') in hosts)]
+    if not mods:
+        return ''
+    lines = ["TRANSCEIVER INVENTORY (device/port: vendor part sn fw health temp):"]
+    for m in mods[:250]:
+        lines.append(f"  {m.get('device','?')}/{m.get('port','?')}: {m.get('vendor','')} "
+                     f"{m.get('part_number','')} sn={m.get('serial','') or m.get('serial_number','')} "
+                     f"fw={m.get('fw_version','')} health={m.get('health','')} temp={m.get('temperature','')}")
+    s = inv.get('summary') or {}
+    if s:
+        lines.append(f"  SUMMARY: {s.get('total_modules')} modules, {s.get('unique_models')} models, "
+                     f"mixed-fw={s.get('mixed_fw_models')}")
+    return '\n'.join(lines)[:max_chars]
+
+
+def build_hardware_context(hosts=None, max_chars=9000):
+    """Per-switch hardware: sensors/thermal/PSU/fan/memory (raw collected text written
+    by ib-hw-collect.sh to monitor-results/hardware-data/<host>_hardware.txt)."""
+    hw_dir = _mr_path('hardware-data')
+    if not os.path.isdir(hw_dir):
+        return ''
+    out, total = ["HARDWARE (per-switch sensors/thermal/PSU/fan/memory):"], 0
+    for f in sorted(glob.glob(os.path.join(hw_dir, '*_hardware.txt'))):
+        host = os.path.basename(f).replace('_hardware.txt', '')
+        if hosts and host not in hosts:
+            continue
+        try:
+            with open(f, 'r') as fh:
+                content = fh.read().strip()
+        except Exception:
+            continue
+        if not content:
+            continue
+        block = f"--- {host} ---\n{content[:1400]}"
+        if total + len(block) > max_chars:
+            out.append("... (more switches omitted)")
+            break
+        out.append(block)
+        total += len(block)
+    return '\n\n'.join(out) if len(out) > 1 else ''
 
 
 def build_context_for_question(question, devices, device_health):
     """Build IB-specific extra context based on keywords in the question."""
     extra_context = []
     q_lower = question.lower()
+    mentioned_any = False
+    mentioned_hosts = []
 
-    # Specific device mentions -> include full device detail
+    # Specific device mentions -> include full device detail + its running config
     for ip, dev in devices.items():
         if dev['hostname'].lower() in q_lower or ip in q_lower:
+            mentioned_any = True
+            mentioned_hosts.append(dev['hostname'])
             extra_context.append(build_device_detail(dev['hostname'], devices, device_health))
+            _cfg = read_collected_config(dev['hostname'])
+            if _cfg:
+                extra_context.append(_cfg)
 
     # Topology questions -> include the DOT graph
     if any(kw in q_lower for kw in ['topolog', 'connection', 'cable', 'wiring',
@@ -397,7 +594,8 @@ def build_context_for_question(question, devices, device_health):
     # Link / flap / error questions -> include full ib_link_errors.json
     if any(kw in q_lower for kw in ['flap', 'down', 'link error', 'symbol error',
                                     'rcv error', 'critical port', 'warning port',
-                                    'perfquery', 'iblinkinfo']):
+                                    'perfquery', 'iblinkinfo', 'ber', 'fec', 'crc',
+                                    'bit error']):
         le = _load_json_safe('ib_link_errors.json')
         if le:
             extra_context.append("FULL LINK ERROR JSON:\n" + json.dumps(le, indent=2)[:3000])
@@ -427,18 +625,33 @@ def build_context_for_question(question, devices, device_health):
         if sh:
             extra_context.append("FULL SHARP JSON:\n" + json.dumps(sh, indent=2)[:2500])
 
-    # Transceiver / firmware / cable
-    if any(kw in q_lower for kw in ['transceiver', 'optic', 'firmware', 'fw version',
-                                    'mlxlink', 'cable', 'cmis', 'osfp']):
-        tr = _load_json_safe('transceiver_inventory.json')
-        if tr:
-            # full inventory can be huge -- summary + first 30 modules
-            summary = tr.get('summary', {})
-            modules = tr.get('modules', [])[:30]
-            extra_context.append(
-                "TRANSCEIVER INVENTORY (summary + first 30 modules):\n"
-                + json.dumps({'summary': summary, 'modules': modules}, indent=2)[:3500]
-            )
+    # Transceiver / optical / firmware / cable -> host-filtered transceiver inventory.
+    # (IB has no separate optical-DOM/BER pipeline; transceiver health/temp + the link
+    # error JSON above cover the optical/BER questions.)
+    _hf = mentioned_hosts or None
+    if any(kw in q_lower for kw in ['transceiver', 'optic', 'optical', 'firmware', 'fw version',
+                                    'mlxlink', 'cable', 'cmis', 'osfp', 'qsfp', 'sfp', 'dom', 'module']):
+        _b = build_transceiver_context(_hf)
+        if _b:
+            extra_context.append(_b)
+
+    # Hardware: sensors / thermal / PSU / fan / memory (ib-hw-collect.sh raw text)
+    if any(kw in q_lower for kw in ['hardware', 'sensor', 'temperature', 'temp', 'psu',
+                                    'power supply', 'fan', 'cpu', 'memory', 'thermal', 'health']):
+        _b = build_hardware_context(_hf)
+        if _b:
+            extra_context.append(_b)
+
+    # Config / consistency / audit questions -> feed actual running configs (Phase 1).
+    if any(kw in q_lower for kw in ['config', 'consistency', 'audit', 'compare',
+                                    'drift', 'running-config', 'running config',
+                                    'mismatch', 'validate', 'baseline']):
+        # Fabric-wide config question (no specific switch named) -> feed every switch's
+        # actual running config so the model can do real drift/consistency analysis.
+        if not mentioned_any:
+            _allcfg = build_all_collected_configs(devices)
+            if _allcfg:
+                extra_context.append(_allcfg)
 
     # UFM
     if 'ufm' in q_lower:
@@ -589,9 +802,11 @@ Per-port counter-delta analysis. problem_ports[] lists each port with severity
 - rcv_errors  growing         -> warning (signal integrity)
 
 ## ib_pkey.json
-IB partitions (= "VLANs" equivalent). Each pkey has {{name, members[], type:
-"full"|"limited"}}. Default partition is 0x7fff (full membership for all).
-- inconsistencies > 0 = cross-device pkey mismatch (rare, usually misconfiguration).
+IB partitions (= "VLANs" equivalent). pkeys[] is a LIST; each entry has
+{{pkey ("0x7fff"), names[], devices[], device_count, ipoib_states[], consistent,
+policy_status}}. Default partition is 0x7fff. per_device{{host:[{{pkey}}...]}}.
+summary has partition_count, inconsistency_count, policy_violations.
+- inconsistency_count > 0 = cross-device pkey mismatch (rare, usually misconfiguration).
 
 ## ib_multicast.json
 groups[]: {{mgid, mlid, pkey, members, kind}}. Typical: IPoIB default,
@@ -607,12 +822,20 @@ is active on this fabric (NCCL accelerated). nodes[] = aggregators, trees[] =
 active aggregation trees.
 
 ## transceiver_inventory.json
-modules[]: per port {{device, port, vendor, vendor_pn, vendor_sn, fw_version,
-cable_length, speed}}. Summary.mixed_fw_models lists models that have more than
-one firmware version present (potential firmware-skew problem).
+modules[]: per port {{device, port, vendor, part_number, serial, fw_version,
+identifier, technology, length, temperature, health}}. Summary.mixed_fw_models lists
+models that have more than one firmware version present (potential firmware-skew problem).
+The chat is also fed a compact TRANSCEIVER INVENTORY block when the question is about
+optics/firmware/cables (filtered to the named switch when one is mentioned).
 
-## log_summary.json
-critical / error / warning / info counts plus top_messages[] examples.
+## hardware-data/<host>_hardware.txt
+Raw per-switch sensors/thermal/PSU/fan/memory text (from ib-hw-collect.sh). A HARDWARE
+block is fed to the chat for temperature / PSU / fan / memory / health questions.
+
+## ib_logs_summary.json
+Per-switch actionable log severities. summary{critical,error,warning,info,total};
+devices[]{device,critical,error,warning,info,total}. Raw lines per switch are in
+monitor-results/logs/<host>.log.
 
 # MLNX-OS NATIVE CLI (admin user, no sudo)
 Diagnostic:
@@ -643,10 +866,10 @@ Diagnostic:
 1. `show interfaces ib <port> counters` -- which counter is non-zero?
 2. `show interfaces ib <port> transceiver diagnostics` -- RX power below -8 dBm?
 3. Swap cable. If error persists -> swap transceiver. Then ASIC port.
-4. `ib perfquery -R -G <guid>` clears counters after fix.
+4. After the fix, re-run Diagnostics -> Local Fabric Scan to confirm the counters stop growing.
 
 ## Port flap (LinkDownedCounter rising)
-1. Both ends: `show interfaces ib <port> counters | grep -i down`
+1. Both ends: `show interfaces ib <port> counters` -- check the LinkDowned counter.
 2. If only one end shows downs -> cable; if both -> ASIC / FW
 3. Replace cable, re-check after 30 min.
 
@@ -656,7 +879,7 @@ Diagnostic:
 3. The Transceiver page in this UI surfaces mixed-FW models in yellow.
 
 ## Topology validation
-1. Local ib_topology.json vs ib ibnetdiscover output should match
+1. Compare ib_topology.json against Diagnostics -> Local Fabric Scan output.
 2. If UFM configured -> use UFM page "Validate Topology" -- shows
    "only_in_local" and "only_in_ufm" GUID lists.
 
@@ -866,6 +1089,103 @@ def call_llm_sync(messages):
         return f"Error: {e}"
 
 
+# ======================== LIVE SWITCH TOOL (read-only) ========================
+
+TOOL_INSTRUCTIONS = """
+=== LIVE SWITCH TOOL (read-only) ===
+When the static fabric data above is not enough, you may pull LIVE read-only data
+from a switch by writing a tool call on its own line, exactly:
+[RUN: <device> <command>]
+  - <device> = a switch hostname from the fabric (e.g. nvis-ib-comp-leaf-01).
+  - <command> = a READ-ONLY MLNX-OS show/diagnostic command. Examples:
+      show version  |  show inventory  |  show interfaces ib status  |
+      show interfaces ib link-diagnostics  |  show interfaces ib <port> counters  |
+      show ib sm  |  show ib smnodes  |  show ib partition  |  show running-config  |
+      show temperature  |  show power  |  show log matching ERR
+    Write/config commands (configure terminal, reboot, write memory, ib sm
+    start/stop, mlxfwmanager, ...) are blocked by the backend and will be rejected.
+    On MLNX-OS the `ib` keyword is the ibdiagnet wrapper, so prefer native `show`
+    commands; for fabric-wide ibutils use the Diagnostics pages, not [RUN:].
+  - Emit at most 3 tool calls per turn. After you receive "TOOL RESULTS", continue;
+    request more only if truly needed.
+  - When you have enough, give your FINAL answer with NO [RUN: ...] / [RUNALL: ...] lines.
+  - Prefer the collected data above; use live tools only when current state is needed.
+
+For a fabric-wide check, fan ONE command out to many switches IN PARALLEL:
+[RUNALL: <target> <command>]
+  - <target> = "all" (every switch) or a role/name substring (e.g. leaf, spine).
+  - Same read-only command rules as [RUN:]. Use this instead of many [RUN:] lines when
+    comparing the same thing across switches (e.g. show ib sm on all leaves).
+  - At most one fan-out per turn; results return per switch.
+"""
+
+
+def run_device_tool(device, command, cookie):
+    """Run ONE read-only switch command by invoking ib-api.sh's run-device-command
+    as a subprocess. This reuses its exact read-only whitelist, admin auth (via the
+    forwarded session cookie) and ssh exec — nothing is duplicated. Never raises."""
+    import subprocess
+    try:
+        body = json.dumps({'device': device, 'command': command})
+        env = dict(os.environ)
+        env['REQUEST_METHOD'] = 'POST'
+        env['QUERY_STRING'] = 'action=run-device-command'
+        env['CONTENT_TYPE'] = 'application/json'
+        env['CONTENT_LENGTH'] = str(len(body.encode('utf-8')))
+        if cookie:
+            env['HTTP_COOKIE'] = cookie
+        proc = subprocess.run(
+            ['bash', os.path.join(WEB_ROOT, 'ib-api.sh')],
+            input=body, env=env, capture_output=True, text=True, timeout=60
+        )
+        raw = proc.stdout or ''
+        for sep in ('\r\n\r\n', '\n\n'):
+            if sep in raw:
+                raw = raw.split(sep, 1)[1]
+                break
+        d = json.loads(raw.strip())
+        if d.get('success'):
+            return True, (d.get('output') or '(no output)')
+        return False, (d.get('error') or 'command rejected')
+    except subprocess.TimeoutExpired:
+        return False, 'tool timed out'
+    except Exception as e:
+        return False, f'tool error: {e}'
+
+
+def run_dispatch(target, command, devices, cookie, max_devices=60, pool=8, per_out=1200):
+    """Phase 3: run ONE read-only command on many switches in PARALLEL (fan-out).
+    target = 'all'/'*' or a role/hostname substring (e.g. 'leaf', 'spine').
+    Returns (hostnames, {hostname: (ok, output)}). Reuses run_device_tool per device."""
+    from concurrent.futures import ThreadPoolExecutor
+    t = (target or '').strip().lstrip('@').lower()
+    targets = []
+    for ip, dev in devices.items():
+        hn = dev.get('hostname', '')
+        role = (dev.get('role', '') or '').lower()
+        if not hn:
+            continue
+        if t in ('all', '*', '') or t in role or t in hn.lower():
+            targets.append(hn)
+    targets = sorted(set(targets))[:max_devices]
+    results = {}
+    if not targets:
+        return targets, results
+
+    def _one(h):
+        ok, out = run_device_tool(h, command, cookie)
+        return h, ok, (out or '')[:per_out]
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(pool, len(targets))) as ex:
+            for h, ok, out in ex.map(_one, targets):
+                results[h] = (ok, out)
+    except Exception as e:
+        for h in targets:
+            results.setdefault(h, (False, f'dispatch error: {e}'))
+    return targets, results
+
+
 # ======================== ACTIONS ========================
 
 def action_chat():
@@ -886,7 +1206,7 @@ def action_chat():
         error_json(
             "AI provider not configured. Click the Settings button in the "
             "top-right of the Ask AI page and choose a provider "
-            "(ollama / openai / claude / gemini) and a model. The chat is "
+            "(ollama / openai / claude / gemini / nvidia) and a model. The chat is "
             "disabled until a provider is set."
         )
 
@@ -899,7 +1219,7 @@ def action_chat():
         fabric_summary=fabric_summary,
         device_list=device_list,
         extra_context=extra_context
-    )
+    ) + "\n" + TOOL_INSTRUCTIONS
     
     # Build messages array
     messages = [{"role": "system", "content": system_prompt}]
@@ -910,10 +1230,80 @@ def action_chat():
     
     messages.append({"role": "user", "content": question})
     
-    # Synchronous LLM call
-    response = call_llm_sync(messages)
-    
-    result_json({"success": True, "response": response})
+    # Bounded read-only tool-calling loop. The model may emit [RUN: device command]
+    # (Phase 2) or [RUNALL: target command] (Phase 3 parallel fan-out) to pull live
+    # data; each call is executed via ib-api.sh run-device-command (its read-only
+    # whitelist + admin auth + ssh exec are reused, not duplicated).
+    cookie = os.environ.get('HTTP_COOKIE', '')
+    valid_hostnames = {d.get('hostname', '') for d in devices.values() if d.get('hostname')}
+    MAX_ROUNDS = 4
+    MAX_TOOLS_PER_ROUND = 3
+    MAX_TOTAL_TOOLS = 10
+    MAX_DISPATCHES = 2            # [RUNALL: ...] parallel fan-outs per question
+    DISPATCH_DEVICE_CAP = 120     # total switches across all dispatches
+    deadline = time.time() + 220  # keep whole request under nginx's 300s read timeout
+    total_tools = 0
+    dispatches_used = 0
+    dispatch_dev_total = 0
+    response = ''
+    tools_used = []
+
+    for _round in range(MAX_ROUNDS):
+        response = call_llm_sync(messages)
+        runs = re.findall(r'\[RUN:\s*(\S+)\s+([^\]]+)\]', response or '')
+        runalls = re.findall(r'\[RUNALL:\s*(\S+)\s+([^\]]+)\]', response or '')
+        if (not runs and not runalls) or time.time() > deadline:
+            break
+        results = []
+        # Single-switch read-only tools
+        for dev_name, cmd in runs[:MAX_TOOLS_PER_ROUND]:
+            if total_tools >= MAX_TOTAL_TOOLS or time.time() > deadline:
+                break
+            dev_name = dev_name.strip()
+            cmd = cmd.strip()
+            if dev_name not in valid_hostnames:
+                results.append(f"[{dev_name}] error: unknown switch (not in fabric)")
+                continue
+            ok, out = run_device_tool(dev_name, cmd, cookie)
+            total_tools += 1
+            tools_used.append({'device': dev_name, 'command': cmd, 'ok': ok})
+            results.append(f"[RUN {dev_name}: {cmd}]\n{(out or '')[:6000]}")
+        # Parallel multi-switch fan-out (Phase 3): at most one dispatch per round
+        for tgt, cmd in runalls[:1]:
+            if dispatches_used >= MAX_DISPATCHES or dispatch_dev_total >= DISPATCH_DEVICE_CAP or time.time() > deadline:
+                break
+            tgt = tgt.strip()
+            cmd = cmd.strip()
+            hosts, dres = run_dispatch(tgt, cmd, devices, cookie,
+                                       max_devices=min(60, DISPATCH_DEVICE_CAP - dispatch_dev_total))
+            dispatches_used += 1
+            dispatch_dev_total += len(hosts)
+            tools_used.append({'dispatch': tgt, 'command': cmd, 'devices': len(hosts)})
+            lines = [f"[RUNALL {tgt}: {cmd}]  ({len(hosts)} switches, parallel)"]
+            for h in hosts:
+                ok, out = dres.get(h, (False, ''))
+                lines.append(f"--- {h} [{'OK' if ok else 'FAIL'}] ---\n{out}")
+            results.append('\n'.join(lines))
+        messages.append({"role": "assistant", "content": response})
+        messages.append({"role": "user", "content":
+            "TOOL RESULTS:\n" + "\n\n".join(results) +
+            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] lines."})
+
+    # If still requesting tools (hit the round cap), force one final answer.
+    if re.search(r'\[RUN(ALL)?:', response or '') and time.time() < deadline:
+        messages.append({"role": "assistant", "content": response})
+        messages.append({"role": "user", "content":
+            "Stop using tools. Give your final answer now from the tool results above; do not emit any [RUN: ...] or [RUNALL: ...] lines."})
+        response = call_llm_sync(messages)
+
+    # Strip leftover tool-call lines from the visible answer (line-based: robust even
+    # when a command in the marker contains ']').
+    final = '\n'.join(
+        ln for ln in (response or '').splitlines()
+        if not re.search(r'\[RUN(?:ALL)?:', ln)
+    ).strip()
+
+    result_json({"success": True, "response": final, "tools_used": tools_used})
 
 
 def action_get_context():
@@ -1180,13 +1570,8 @@ elif ACTION == 'get-analysis':
     action_get_analysis()
 elif ACTION == 'get-log-messages':
     try:
-        log_file = os.path.join(LLDPQ_DIR, 'monitor-results', 'log_summary.json')
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                data = json.load(f)
-            result_json({"success": True, "messages": data.get('recent_messages', {}), "totals": data.get('totals', {})})
-        else:
-            result_json({"success": True, "messages": {}, "totals": {}})
+        totals, messages = _load_ib_logs()
+        result_json({"success": True, "messages": messages, "totals": totals})
     except Exception as e:
         error_json(str(e))
 else:
