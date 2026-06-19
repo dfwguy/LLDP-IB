@@ -402,15 +402,16 @@ def build_device_detail(hostname, devices, device_health):
         node = next((n for n in topo.get('nodes', []) if n.get('hostname') == hostname), None)
         if node:
             detail.append(f"  GUID: {node.get('guid', '?')}, LID: {node.get('lid', '?')}, type: {node.get('type', '?')}")
+        # ib_topology.json links use source_desc/target_desc + source_port/target_port.
         links = topo.get('links', [])
-        local_links = [l for l in links if l.get('src') == hostname or l.get('dst') == hostname]
+        local_links = [l for l in links if l.get('source_desc') == hostname or l.get('target_desc') == hostname]
         if local_links:
             detail.append(f"  IB LINKS ({len(local_links)}):")
             for l in local_links[:25]:
-                if l.get('src') == hostname:
-                    detail.append(f"    {l.get('src_port', '?')} -> {l.get('dst', '?')}:{l.get('dst_port', '?')} ({l.get('speed', '')})")
+                if l.get('source_desc') == hostname:
+                    detail.append(f"    {l.get('source_port', '?')} -> {l.get('target_desc', '?')}:{l.get('target_port', '?')} ({l.get('speed', '')})")
                 else:
-                    detail.append(f"    {l.get('dst_port', '?')} <- {l.get('src', '?')}:{l.get('src_port', '?')} ({l.get('speed', '')})")
+                    detail.append(f"    {l.get('target_port', '?')} <- {l.get('source_desc', '?')}:{l.get('source_port', '?')} ({l.get('speed', '')})")
 
     # Problem ports on this device
     le = _load_json_safe('ib_link_errors.json')
@@ -1117,6 +1118,24 @@ For a fabric-wide check, fan ONE command out to many switches IN PARALLEL:
   - Same read-only command rules as [RUN:]. Use this instead of many [RUN:] lines when
     comparing the same thing across switches (e.g. show ib sm on all leaves).
   - At most one fan-out per turn; results return per switch.
+
+To check how two endpoints connect through the fabric (graph-based, read-only):
+[PATH: <source> <dest>]
+  - <source>/<dest> = switch/HCA hostnames from the topology. Returns the hop-by-hop
+    path over the discovered IB topology (or where it breaks). Use for "how does A
+    reach B", partition, or missing-link questions. (IB has no live IP tracepath; this
+    is the topology equivalent.)
+
+=== REMEDIATION SUGGESTIONS ===
+When you recommend a command the operator should RUN to investigate or fix something, put
+it on its own line exactly as:
+[FIX: <device-or-group> <command>]
+  - This is a SUGGESTION rendered as a one-click button — you do NOT execute it. It opens
+    the Command Runner prefilled; the operator reviews and runs it.
+  - Use a real switch/role name and a concrete MLNX-OS command. Read-only show/diagnostic
+    commands run directly; configuration changes are applied manually by the admin
+    (LLDPq-IB is monitoring-only and the Command Runner only executes read-only commands).
+  - Never suggest destructive commands.
 """
 
 
@@ -1186,6 +1205,72 @@ def run_dispatch(target, command, devices, cookie, max_devices=60, pool=8, per_o
     return targets, results
 
 
+def run_topology_path(src, dst):
+    """IB-native read-only path discovery: shortest path between two endpoints over
+    ib_topology.json (BFS), mirroring the Tracepath page's client-side logic. src/dst
+    are hostnames (exact, else unique substring). No SSH; pure graph lookup. On
+    MLNX-OS there is no live IP tracepath, so this topology path is the IB equivalent."""
+    topo = _load_json_file(_mr_path('ib_topology.json'))
+    if not topo or not topo.get('links'):
+        return False, 'no topology data (ib_topology.json) available'
+    nodes = {n.get('hostname') for n in topo.get('nodes', []) if n.get('hostname')}
+
+    def resolve(x):
+        x = (x or '').strip()
+        if x in nodes:
+            return x
+        exact = [h for h in nodes if x.lower() == h.lower()]
+        if exact:
+            return exact[0]
+        sub = [h for h in nodes if x.lower() in h.lower()]
+        return sub[0] if len(sub) == 1 else None
+
+    s, d = resolve(src), resolve(dst)
+    if not s or not d:
+        return False, f'could not resolve endpoints: src={src!r}->{s}, dst={dst!r}->{d}'
+    if s == d:
+        return True, f'{s} is the same endpoint as {d} (0 hops).'
+
+    # ib_topology.json links use source_desc/target_desc (hostnames) + source_port/target_port.
+    adj, edge = {}, {}
+    for l in topo.get('links', []):
+        a, b = l.get('source_desc'), l.get('target_desc')
+        if not a or not b:
+            continue
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+        edge[(a, b)] = (l.get('source_port', ''), l.get('target_port', ''), l.get('speed', ''))
+        edge[(b, a)] = (l.get('target_port', ''), l.get('source_port', ''), l.get('speed', ''))
+
+    from collections import deque
+    prev = {s: None}
+    q = deque([s])
+    while q:
+        cur = q.popleft()
+        if cur == d:
+            break
+        for nb in sorted(adj.get(cur, ())):
+            if nb not in prev:
+                prev[nb] = cur
+                q.append(nb)
+    if d not in prev:
+        return False, (f'NO PATH found between {s} and {d} in the discovered topology '
+                       '(possible fabric partition or missing links).')
+
+    path = []
+    cur = d
+    while cur is not None:
+        path.append(cur)
+        cur = prev[cur]
+    path.reverse()
+    lines = [f"PATH {s} -> {d} ({len(path) - 1} hops):"]
+    for i in range(len(path) - 1):
+        a, b = path[i], path[i + 1]
+        sp, dp, spd = edge.get((a, b), ('', '', ''))
+        lines.append(f"  {a} {sp} --[{spd}]--> {dp} {b}")
+    return True, '\n'.join(lines)
+
+
 # ======================== ACTIONS ========================
 
 def action_chat():
@@ -1252,7 +1337,8 @@ def action_chat():
         response = call_llm_sync(messages)
         runs = re.findall(r'\[RUN:\s*(\S+)\s+([^\]]+)\]', response or '')
         runalls = re.findall(r'\[RUNALL:\s*(\S+)\s+([^\]]+)\]', response or '')
-        if (not runs and not runalls) or time.time() > deadline:
+        paths = re.findall(r'\[PATH:\s*(\S+)\s+(\S+)\]', response or '')
+        if (not runs and not runalls and not paths) or time.time() > deadline:
             break
         results = []
         # Single-switch read-only tools
@@ -1284,26 +1370,39 @@ def action_chat():
                 ok, out = dres.get(h, (False, ''))
                 lines.append(f"--- {h} [{'OK' if ok else 'FAIL'}] ---\n{out}")
             results.append('\n'.join(lines))
+        # Topology path discovery (graph-based, read-only, no SSH)
+        for src, dst in paths[:2]:
+            if time.time() > deadline:
+                break
+            src, dst = src.strip(), dst.strip()
+            ok, out = run_topology_path(src, dst)
+            tools_used.append({'path': f'{src} -> {dst}', 'ok': ok})
+            results.append(f"[PATH {src} -> {dst}]\n{out}")
         messages.append({"role": "assistant", "content": response})
         messages.append({"role": "user", "content":
             "TOOL RESULTS:\n" + "\n\n".join(results) +
-            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] lines."})
+            "\n\nContinue. Request more data only if needed; otherwise give the final answer with no [RUN: ...] / [RUNALL: ...] / [PATH: ...] lines."})
 
     # If still requesting tools (hit the round cap), force one final answer.
-    if re.search(r'\[RUN(ALL)?:', response or '') and time.time() < deadline:
+    if re.search(r'\[(?:RUN(?:ALL)?|PATH):', response or '') and time.time() < deadline:
         messages.append({"role": "assistant", "content": response})
         messages.append({"role": "user", "content":
-            "Stop using tools. Give your final answer now from the tool results above; do not emit any [RUN: ...] or [RUNALL: ...] lines."})
+            "Stop using tools. Give your final answer now from the results above; do not emit any data-tool lines ([RUN:]/[RUNALL:]/[PATH:]). You MAY include [FIX: ...] remediation suggestions."})
         response = call_llm_sync(messages)
 
-    # Strip leftover tool-call lines from the visible answer (line-based: robust even
-    # when a command in the marker contains ']').
+    # Suggested remediation commands (NOT executed) -> returned as one-click buttons.
+    fixes = []
+    for dev, cmd in re.findall(r'\[FIX:\s*(\S+)\s+(.+?)\]', response or ''):
+        fixes.append({'device': dev.strip(), 'command': cmd.strip()})
+
+    # Strip leftover tool-call / fix lines from the visible answer (line-based: robust
+    # even when a command in the marker contains ']').
     final = '\n'.join(
         ln for ln in (response or '').splitlines()
-        if not re.search(r'\[RUN(?:ALL)?:', ln)
+        if not re.search(r'\[(?:RUN(?:ALL)?|PATH|FIX):', ln)
     ).strip()
 
-    result_json({"success": True, "response": final, "tools_used": tools_used})
+    result_json({"success": True, "response": final, "tools_used": tools_used, "fixes": fixes})
 
 
 def action_get_context():
