@@ -52,7 +52,7 @@ RUN useradd -m -s /bin/bash -G www-data lldpq \
     && rm -f /root/.bashrc /root/.profile /root/.bash_logout
 
 # Allow www-data to run only the commands needed by CGI workflows.
-RUN echo "www-data ALL=(lldpq) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh, /usr/bin/scp, /usr/bin/mkdir, /usr/bin/rm, /usr/bin/tee, /usr/bin/cat, /usr/bin/ssh-keygen, /home/lldpq/lldpq/send-key.sh, /home/lldpq/lldpq/setup-ufm-ssh.sh" > /etc/sudoers.d/www-data-lldpq \
+RUN echo "www-data ALL=(lldpq) NOPASSWD: /usr/bin/timeout, /usr/bin/ssh, /usr/bin/scp, /usr/bin/mkdir, /usr/bin/rm, /usr/bin/tee, /usr/bin/cat, /usr/bin/ssh-keygen, /usr/bin/bash, /bin/bash, /home/lldpq/lldpq/send-key.sh, /home/lldpq/lldpq/setup-ufm-ssh.sh" > /etc/sudoers.d/www-data-lldpq \
     && echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start isc-dhcp-server, /usr/bin/systemctl stop isc-dhcp-server, /usr/bin/systemctl restart isc-dhcp-server, /usr/bin/systemctl disable isc-dhcp-server, /usr/bin/systemctl enable isc-dhcp-server, /usr/bin/tee /etc/dhcp/dhcpd.conf, /usr/bin/tee /etc/dhcp/dhcpd.hosts, /usr/bin/tee /etc/default/isc-dhcp-server, /usr/bin/tee /etc/lldpq.conf, /usr/bin/cp, /usr/bin/mkdir, /usr/bin/rm, /usr/bin/pkill -x dhcpd, /usr/sbin/dhcpd, /usr/bin/cat /etc/dhcp/dhcpd.conf, /usr/bin/chmod, /usr/bin/chown" > /etc/sudoers.d/www-data-provision \
     && echo "www-data ALL=(root) NOPASSWD: /home/lldpq/lldpq/ib-local-scan.sh" > /etc/sudoers.d/www-data-diag \
     && chmod 440 /etc/sudoers.d/www-data-lldpq /etc/sudoers.d/www-data-provision /etc/sudoers.d/www-data-diag
