@@ -834,8 +834,8 @@ Raw per-switch sensors/thermal/PSU/fan/memory text (from ib-hw-collect.sh). A HA
 block is fed to the chat for temperature / PSU / fan / memory / health questions.
 
 ## ib_logs_summary.json
-Per-switch actionable log severities. summary{critical,error,warning,info,total};
-devices[]{device,critical,error,warning,info,total}. Raw lines per switch are in
+Per-switch actionable log severities. summary{{critical,error,warning,info,total}};
+devices[]{{device,critical,error,warning,info,total}}. Raw lines per switch are in
 monitor-results/logs/<host>.log.
 
 # MLNX-OS NATIVE CLI (admin user, no sudo)
