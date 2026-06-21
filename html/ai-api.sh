@@ -29,8 +29,16 @@ ACTION=$(echo "$QUERY_STRING" | grep -oP 'action=\K[^&]*' | head -1)
 
 source "$(dirname "$0")/auth-guard.sh"
 case "$ACTION" in
-    get-config|save-config|test-connection|list-models)
+    get-config|save-config|test-connection|list-models|get-audit)
         require_admin ;;
+    analyze)
+        # The hourly cron (lldpq-ai-analyze) calls this from loopback with no session.
+        # Trust loopback only; any external caller still needs a valid session. nginx
+        # sets REMOTE_ADDR to the real peer, so this cannot be spoofed from outside.
+        case "${REMOTE_ADDR:-}" in
+            127.0.0.1|::1) : ;;
+            *) require_auth ;;
+        esac ;;
     *)
         require_auth ;;
 esac
@@ -362,11 +370,43 @@ def build_fabric_summary():
             if lines:
                 summary.append(f"  {host}: {lines[0][:160]}")
 
-    # 12. UFM (if reachable)
+    # 12. UFM (if reachable) + active UFM events/alarms (collected by ufm-adapter.py)
     try:
         ufm_url = os.environ.get('UFM_URL', '')
         if ufm_url:
             summary.append(f"UFM: integration configured at {ufm_url}")
+    except Exception:
+        pass
+    ev = _load_json_safe('ib_ufm_events.json')
+    if ev and ev.get('events'):
+        s = ev.get('summary', {})
+        summary.append(
+            f"UFM EVENTS: {s.get('total', len(ev['events']))} active "
+            f"({s.get('critical', 0)} critical, {s.get('warning', 0)} warning, {s.get('minor', 0)} minor)"
+        )
+        for e in ev['events'][:4]:
+            summary.append(f"  UFM {str(e.get('severity', '?')).upper()}: "
+                           f"{e.get('object', '')} {(e.get('description') or e.get('name') or '')[:110]}")
+
+    # 13. ibdiagnet -- latest fabric diagnostic headline (if one has been run)
+    fd = _load_json_safe('ib_fabric_diag.json')
+    if fd and fd.get('parsed'):
+        t = fd.get('totals') or {}
+        summary.append(
+            f"IBDIAGNET (last run {fd.get('finished_at') or fd.get('generated_at', '?')}): "
+            f"{t.get('errors', '?')} errors, {t.get('warnings', '?')} warnings (target={fd.get('target', '?')})"
+        )
+
+    # 14. Short-term trend headline (movement in CRITICAL ports across recent snapshots)
+    try:
+        _snaps = _load_snapshots(12)
+        if len(_snaps) >= 3:
+            _seq = [_snap_le(s)[0] for s in _snaps]
+            if _seq[-1] != _seq[0]:
+                summary.append(
+                    f"TREND: CRITICAL ports {_seq[0]}->{_seq[-1]} over last {len(_seq)} samples "
+                    f"({'WORSENING' if _seq[-1] > _seq[0] else 'improving'}) -- ask 'trend' for detail"
+                )
     except Exception:
         pass
 
@@ -555,6 +595,160 @@ def build_hardware_context(hosts=None, max_chars=9000):
     return '\n\n'.join(out) if len(out) > 1 else ''
 
 
+def build_ibdiag_context(max_chars=4500):
+    """Latest ibdiagnet fabric diagnostic (run on the UFM appliance, parsed by
+    process_ibdiagnet.py into ib_fabric_diag.json). The richest fabric-wide diagnostic:
+    per-stage warning/error counts, BER / credit-loop / bad-GUID findings, fabric
+    summary, cable count. Read-only; absent until a diagnostic has been run."""
+    d = _load_json_safe('ib_fabric_diag.json')
+    if not d or not d.get('parsed'):
+        return ''
+    t = d.get('totals') or {}
+    lines = [
+        "LATEST IBDIAGNET FABRIC DIAGNOSTIC (Diagnostics -> Fabric Diagnostic):",
+        f"  run={d.get('finished_at') or d.get('generated_at', '?')} "
+        f"target={d.get('target', '?')} version={d.get('version', '?')}",
+        f"  TOTALS: {t.get('errors', '?')} errors, {t.get('warnings', '?')} warnings",
+    ]
+    stages = [s for s in (d.get('stages') or []) if (s.get('errors') or s.get('warnings'))]
+    if stages:
+        lines.append("  STAGES WITH FINDINGS:")
+        for s in stages[:25]:
+            c = f" -- {s.get('comment')}" if s.get('comment') else ""
+            lines.append(f"    {s.get('name', '?')}: {s.get('errors', 0)} err, {s.get('warnings', 0)} warn{c}")
+    elif d.get('stages'):
+        lines.append("  STAGES: all checks passed (0 errors / 0 warnings)")
+    for e in (d.get('top_errors') or [])[:8]:
+        lines.append(f"  -E- {e}")
+    for w in (d.get('top_warnings') or [])[:5]:
+        lines.append(f"  -W- {w}")
+    fs = [ln for ln in (d.get('fabric_summary') or []) if ln]
+    if fs:
+        lines.append("  FABRIC SUMMARY:")
+        for ln in fs[:20]:
+            lines.append(f"    {ln}")
+    cab = d.get('cables') or {}
+    if cab.get('entries'):
+        lines.append(f"  CABLES: {cab.get('entries')} (source={cab.get('source')})")
+    return '\n'.join(lines)[:max_chars]
+
+
+def _load_snapshots(limit=12):
+    """Up to <limit> most-recent fabric snapshots (oldest->newest) written by
+    ufm-adapter.py to monitor-results/snapshots/. Used for short-term trend analysis."""
+    snaps = []
+    for base in (os.path.join(WEB_ROOT, 'monitor-results'), MONITOR_RESULTS_DIR):
+        snap_dir = os.path.join(base, 'snapshots')
+        if not os.path.isdir(snap_dir):
+            continue
+        files = sorted(glob.glob(os.path.join(snap_dir, 'lldpq-ib-*.json')))[-limit:]
+        for p in files:
+            try:
+                with open(p) as f:
+                    snaps.append(json.load(f))
+            except Exception:
+                pass
+        if snaps:
+            break
+    return snaps
+
+
+def _snap_le(s):
+    m = ((s.get('ib_link_errors') or {}).get('summary') or {})
+    return (int(m.get('critical', m.get('critical_count', 0)) or 0),
+            int(m.get('warning', m.get('warning_count', 0)) or 0),
+            int(m.get('flapping', m.get('flapping_1h', 0)) or 0))
+
+
+def build_trend_context(limit=12, max_chars=2500):
+    """Short-term trend across the last N snapshots (~N*10 min): link-error counts,
+    SM master, topology size, and newly-appeared problem ports. Lets the model spot
+    DEGRADATION over time ('rising 3 cycles') instead of a single snapshot."""
+    snaps = _load_snapshots(limit)
+    if len(snaps) < 2:
+        return ''
+    crit = [_snap_le(s)[0] for s in snaps]
+    warn = [_snap_le(s)[1] for s in snaps]
+    flap = [_snap_le(s)[2] for s in snaps]
+
+    def arrow(seq):
+        if len(seq) < 2 or seq[-1] == seq[0]:
+            return 'flat'
+        return 'RISING' if seq[-1] > seq[0] else 'falling'
+
+    lines = [f"SHORT-TERM TREND (last {len(snaps)} samples, ~{len(snaps) * 10} min, oldest->newest):",
+             f"  CRITICAL ports: {crit}  ({arrow(crit)})",
+             f"  WARNING ports:  {warn}  ({arrow(warn)})",
+             f"  flapping(1h):   {flap}  ({arrow(flap)})"]
+
+    def topo_n(s):
+        ts = ((s.get('ib_topology') or {}).get('summary') or {})
+        return int(ts.get('total_links', 0) or 0), int(ts.get('total_nodes', 0) or 0)
+
+    l0, n0 = topo_n(snaps[0])
+    l1, n1 = topo_n(snaps[-1])
+    if l0 != l1 or n0 != n1:
+        note = 'links DROPPED -- possible cable pull/down' if l1 < l0 else 'links added'
+        lines.append(f"  TOPOLOGY CHANGE: links {l0}->{l1}, nodes {n0}->{n1} ({note})")
+
+    def master(s):
+        sm = s.get('ib_sm_status') or {}
+        ms = [x for x in (sm.get('sms') or []) if str(x.get('state', '')).lower() == 'master']
+        return ms[0].get('guid') if ms else sm.get('master_guid')
+
+    m0, m1 = master(snaps[0]), master(snaps[-1])
+    if m0 and m1 and m0 != m1:
+        lines.append(f"  SM MASTER CHANGED: {str(m0)[:18]}... -> {str(m1)[:18]}...")
+
+    def ports(s):
+        return {f"{p.get('device')}:{p.get('port')}"
+                for p in ((s.get('ib_link_errors') or {}).get('problem_ports') or [])}
+
+    new_ports = ports(snaps[-1]) - ports(snaps[0])
+    if new_ports:
+        lines.append(f"  NEW PROBLEM PORTS since oldest sample: {', '.join(sorted(new_ports)[:10])}")
+    return '\n'.join(lines)[:max_chars]
+
+
+def build_ufm_events_context(max_chars=3000):
+    """Active UFM events/alarms collected by ufm-adapter.py into ib_ufm_events.json.
+    Lets the model cross-reference its own findings against what UFM itself is flagging."""
+    ev = _load_json_safe('ib_ufm_events.json')
+    if not ev or not ev.get('events'):
+        return ''
+    s = ev.get('summary', {})
+    lines = [f"UFM ACTIVE EVENTS/ALARMS ({s.get('total', len(ev['events']))} total: "
+             f"{s.get('critical', 0)} critical, {s.get('warning', 0)} warning, {s.get('minor', 0)} minor):"]
+    for e in ev['events'][:40]:
+        lines.append(f"  {str(e.get('severity', '?')).upper()} [{e.get('type', '?')}] "
+                     f"{e.get('object', '')} -- {(e.get('description') or e.get('name') or '')[:140]} "
+                     f"({e.get('timestamp', '')})")
+    return '\n'.join(lines)[:max_chars]
+
+
+def _audit(kind, device, command, ok):
+    """Append a one-line JSON record for every LIVE command the AI executes. The AI runs
+    real (read-only) switch commands, so we keep an operator-reviewable trail
+    (who/when/what/result). Best-effort; never raises."""
+    try:
+        rec = {
+            'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'user': os.environ.get('LLDPQ_AUTH_USER', '?'),
+            'kind': kind, 'device': device, 'command': command, 'ok': bool(ok),
+        }
+        line = json.dumps(rec) + '\n'
+        for path in (os.path.join(WEB_ROOT, 'monitor-results', 'ai-audit.log'),
+                     '/tmp/lldpq-ai-audit.log'):
+            try:
+                with open(path, 'a') as f:
+                    f.write(line)
+                return
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
 def build_context_for_question(question, devices, device_health):
     """Build IB-specific extra context based on keywords in the question."""
     extra_context = []
@@ -654,7 +848,28 @@ def build_context_for_question(question, devices, device_health):
             if _allcfg:
                 extra_context.append(_allcfg)
 
-    # UFM
+    # ibdiagnet / fabric diagnostic -> latest parsed ibdiagnet report
+    if any(kw in q_lower for kw in ['ibdiagnet', 'fabric diagnostic', 'diagnostic report',
+                                    'credit loop', 'credit-loop', 'deadlock', 'bad guid',
+                                    'duplicate guid', 'fabric scan', 'routing']):
+        _b = build_ibdiag_context()
+        if _b:
+            extra_context.append(_b)
+
+    # Trend / degradation / over-time questions -> short-term snapshot trend
+    if any(kw in q_lower for kw in ['trend', 'degrad', 'over time', 'history', 'historical',
+                                    'rising', 'growing', 'worse', 'worsen', 'getting',
+                                    'progress', 'since', 'last hour', 'last day', 'compare to',
+                                    'compared to', 'change over']):
+        _b = build_trend_context()
+        if _b:
+            extra_context.append(_b)
+
+    # UFM events / alarms + config
+    if any(kw in q_lower for kw in ['ufm', 'alarm', 'event']):
+        _b = build_ufm_events_context()
+        if _b:
+            extra_context.append(_b)
     if 'ufm' in q_lower:
         url = os.environ.get('UFM_URL', '')
         extra_context.append(f"UFM CONFIG: URL={url or 'not set'}, "
@@ -751,6 +966,21 @@ RULES:
     All else                        -> INFO
 - IB has no BGP, VLANs, or VRFs. Do NOT suggest those.
 
+QUICK IB PLAYBOOKS (use when relevant):
+- SM lost (0 Masters): raise sm_priority on best candidate + restart SM; cross-check
+  with `show ib sm` / `show ib smnodes`; verify on the UFM appliance.
+- Multiple Masters (split-brain): compare sm_priority + sm_sl across all SMs; only one
+  should be highest priority.
+- Critical link errors on a port: `show interfaces ib <port> counters` (which counter?),
+  then `show interfaces ib <port> transceiver diagnostics` (RX power < -8 dBm?); clean,
+  then swap cable, then transceiver, then ASIC port.
+- Port flap (LinkDownedCounter rising): check both ends' counters; one end down => cable,
+  both => ASIC/FW; replace cable, recheck after 30 min.
+- Mixed transceiver firmware: group by part number; schedule FW alignment for any PN
+  with >1 fw_version.
+- P_Key inconsistency: a partition present on some switches but not others usually means
+  a missed config push; re-apply the partition policy.
+
 === LIVE FABRIC DATA ===
 
 {fabric_summary}
@@ -837,6 +1067,25 @@ block is fed to the chat for temperature / PSU / fan / memory / health questions
 Per-switch actionable log severities. summary{{critical,error,warning,info,total}};
 devices[]{{device,critical,error,warning,info,total}}. Raw lines per switch are in
 monitor-results/logs/<host>.log.
+
+## ib_fabric_diag.json (latest ibdiagnet run, conditional)
+Parsed ibdiagnet output (the richest fabric-wide diagnostic, run on the UFM appliance).
+totals{{errors,warnings}}; stages[]{{name,errors,warnings,comment}} (per-check: Bad
+GUIDs/LIDs, Link Speed, Credit Loops, Routing, SHARP, ...); top_errors[]/top_warnings[]
+(raw -E-/-W- lines); fabric_summary[] (node/switch/CA/link counts). A LATEST IBDIAGNET
+block is fed when the question is about ibdiagnet / credit loops / bad GUIDs / routing.
+This is authoritative for credit-loop, routing and BER-class issues -- prefer it.
+
+## ib_ufm_events.json (conditional)
+Active UFM events/alarms. summary{{total,critical,warning,minor,info}};
+events[]{{severity,type,name,object,description,timestamp}}. Fed when the question is
+about UFM / alarms / events. Cross-reference these against your own findings.
+
+## short-term trend (snapshots/, conditional)
+A SHORT-TERM TREND block (last ~12 snapshots, 10 min apart) is fed for trend / "over
+time" / degradation questions: CRITICAL/WARNING/flapping port counts oldest->newest,
+SM master changes, topology link/node changes, and newly-appeared problem ports. Use it
+to distinguish a steady-state warning from an actively DEGRADING link.
 
 # MLNX-OS NATIVE CLI (admin user, no sudo)
 Diagnostic:
@@ -1164,12 +1413,15 @@ def run_device_tool(device, command, cookie):
                 break
         d = json.loads(raw.strip())
         if d.get('success'):
-            return True, (d.get('output') or '(no output)')
-        return False, (d.get('error') or 'command rejected')
+            ok, out = True, (d.get('output') or '(no output)')
+        else:
+            ok, out = False, (d.get('error') or 'command rejected')
     except subprocess.TimeoutExpired:
-        return False, 'tool timed out'
+        ok, out = False, 'tool timed out'
     except Exception as e:
-        return False, f'tool error: {e}'
+        ok, out = False, f'tool error: {e}'
+    _audit('RUN', device, command, ok)
+    return ok, out
 
 
 def run_dispatch(target, command, devices, cookie, max_devices=60, pool=8, per_out=1200):
@@ -1649,6 +1901,66 @@ def action_get_analysis():
         result_json({"success": True, "analysis": "", "timestamp": 0, "stale": True})
 
 
+def action_report():
+    """Generate a structured, printable IB fabric health report (markdown).
+    Uses the same context as chat plus the ibdiagnet report, trend and UFM events."""
+    if not AI_PROVIDER or not AI_MODEL:
+        error_json("AI provider not configured. Set a provider in Settings first.")
+
+    fabric_summary, devices, device_health = build_fabric_summary()
+    device_list = build_device_list(devices, device_health)
+    extra = []
+    for _b in (build_ibdiag_context(), build_trend_context(), build_ufm_events_context()):
+        if _b:
+            extra.append(_b)
+    extra_context = '\n\n'.join(extra)
+
+    prompt = (
+        "Produce a structured InfiniBand FABRIC HEALTH REPORT in GitHub-flavoured markdown.\n"
+        "Use ONLY the data provided below; reference real hostnames, GUIDs, LIDs and ports.\n"
+        "Do NOT invent values. Use these exact sections:\n\n"
+        "# Fabric Health Report\n"
+        "## Executive Summary  (2-4 sentences, end with overall status: RED / AMBER / GREEN)\n"
+        "## Critical Issues  (bullets; if none, write 'None')\n"
+        "## Warnings  (bullets; if none, write 'None')\n"
+        "## Subnet Manager\n"
+        "## Link Health & Trend\n"
+        "## Partitions / QoS / SHARP\n"
+        "## Transceivers & Hardware\n"
+        "## Recommended Actions  (numbered, concrete MLNX-OS commands or LLDPq-IB pages)\n\n"
+        "=== DATA ===\n"
+        f"{fabric_summary}\n\n{device_list}\n\n{extra_context}\n=== END ==="
+    )
+    messages = [
+        {"role": "system", "content": "You are an InfiniBand fabric health auditor. "
+         "Output ONLY the markdown report, no preamble."},
+        {"role": "user", "content": prompt},
+    ]
+    report = call_llm_sync(messages)
+    result_json({"success": True, "report": report, "timestamp": time.time(),
+                 "device_count": len(devices)})
+
+
+def action_get_audit():
+    """Return the most recent AI live-command executions (admin only)."""
+    entries = []
+    for path in (os.path.join(WEB_ROOT, 'monitor-results', 'ai-audit.log'),
+                 '/tmp/lldpq-ai-audit.log'):
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    for ln in f.readlines()[-200:]:
+                        try:
+                            entries.append(json.loads(ln))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            break
+    entries.reverse()
+    result_json({"success": True, "entries": entries})
+
+
 # ======================== ROUTER ========================
 
 if ACTION == 'chat':
@@ -1667,6 +1979,10 @@ elif ACTION == 'analyze':
     action_analyze()
 elif ACTION == 'get-analysis':
     action_get_analysis()
+elif ACTION == 'report':
+    action_report()
+elif ACTION == 'get-audit':
+    action_get_audit()
 elif ACTION == 'get-log-messages':
     try:
         totals, messages = _load_ib_logs()

@@ -340,6 +340,51 @@ class LLDPqIBAlerts:
                         sev, device)
                     self._set_state(device, "fan_rpm", state)
 
+    def check_ai_analysis(self) -> None:
+        """Fabric-wide alert: surface the autonomous AI fabric analysis when it flags
+        CRITICAL findings. Reads ai-analysis.json (written by lldpq-ai-analyze via the
+        ai-api.sh `analyze` action). Throttled like every other check; no-op when AI is
+        not configured or the analysis is stale."""
+        if not self.config.get("alert_types", {}).get("network_alerts", True):
+            return
+        # ai-analysis.json lives in the web root, not monitor-results.
+        for path in (Path("/var/www/html/ai-analysis.json"),
+                     self.monitor_results.parent / "ai-analysis.json"):
+            if path.exists():
+                break
+        else:
+            return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception:
+            return
+
+        # Ignore stale analyses (older than 6h) -- avoid alerting on a dead AI job.
+        if time.time() - float(data.get("timestamp", 0) or 0) > 6 * 3600:
+            return
+        text = (data.get("analysis") or "").strip()
+        if not text:
+            return
+
+        has_critical = re.search(r"\bcritical\b", text, re.IGNORECASE) is not None
+        if has_critical:
+            state = "CRITICAL"
+            # First line mentioning "critical" makes a useful one-line summary.
+            excerpt = next((ln.strip() for ln in text.splitlines()
+                            if "critical" in ln.lower() and ln.strip()), text[:200])
+            title = "AI fabric analysis: CRITICAL findings"
+            msg = excerpt[:300]
+        else:
+            state = "OK"
+            title = "AI fabric analysis clear"
+            msg = "Autonomous AI analysis reports no critical findings."
+
+        if self._should_send("fabric", "ai_analysis", state):
+            severity = "RECOVERED" if state == "OK" else state
+            self._notify(title, msg, severity, "fabric")
+            self._set_state("fabric", "ai_analysis", state)
+
     # ---- entry ----------------------------------------------------------
 
     def run(self) -> None:
@@ -351,6 +396,7 @@ class LLDPqIBAlerts:
         self.check_log_summary()
         self.check_unreachable_devices()
         self.check_hardware()
+        self.check_ai_analysis()
         print("LLDPq-IB alert check complete.")
 
 

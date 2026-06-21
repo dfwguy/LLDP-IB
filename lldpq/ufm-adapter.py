@@ -457,6 +457,82 @@ def build_sharp(modules, by_guid):
     }
 
 
+def _norm_severity(sev):
+    """Map UFM severity spellings -> critical/warning/minor/info."""
+    s = str(sev or "").strip().lower()
+    if s in ("critical", "crit", "fatal", "alert", "emergency"):
+        return "critical"
+    if s in ("warning", "warn", "major", "error", "err"):
+        return "warning"
+    if s in ("minor", "low"):
+        return "minor"
+    return "info"
+
+
+def build_ufm_events(events_raw, limit=100):
+    """Normalize UFM events/alarms into ib_ufm_events.json.
+
+    UFM's REST returns a list of event dicts (field names vary across versions), so
+    every field is best-effort. We keep the most recent <limit> and roll up severity
+    counts so the AI / dashboard can cross-reference UFM's own alerting.
+    """
+    # tolerate {"data": [...]} / {"events": [...]} / bare list
+    if isinstance(events_raw, dict):
+        events_raw = (events_raw.get("data") or events_raw.get("events")
+                      or events_raw.get("results") or [])
+    if not isinstance(events_raw, list):
+        events_raw = []
+
+    norm = []
+    for e in events_raw:
+        if not isinstance(e, dict):
+            continue
+        sev = _norm_severity(e.get("severity") or e.get("event_severity") or e.get("level"))
+        ts = (e.get("timestamp") or e.get("time") or e.get("event_time")
+              or e.get("created") or "")
+        etype = (e.get("type") or e.get("event_type") or e.get("category")
+                 or e.get("name") or "")
+        name = (e.get("name") or e.get("event_name") or etype or "")
+        desc = (e.get("description") or e.get("message") or e.get("event_description")
+                or e.get("info") or name or "")
+        obj = (e.get("object_name") or e.get("object_path") or e.get("object")
+               or e.get("device") or e.get("source") or "")
+        norm.append({
+            "id": e.get("id") or e.get("event_id") or "",
+            "severity": sev,
+            "type": str(etype)[:60],
+            "name": str(name)[:120],
+            "object": str(obj)[:120],
+            "description": str(desc)[:300],
+            "timestamp": str(ts)[:40],
+        })
+
+    # Order: most severe first, most recent within each severity. Two stable sorts
+    # (recency, then severity) so critical/warning float above the info/mcast noise
+    # that dominates a busy fabric -- that's what the AI context + dashboard surface.
+    sev_rank = {"critical": 0, "warning": 1, "minor": 2, "info": 3}
+    try:
+        norm.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        norm.sort(key=lambda x: sev_rank.get(x.get("severity"), 9))
+    except Exception:
+        pass
+    norm = norm[:limit]
+
+    summary = {"total": len(norm), "critical": 0, "warning": 0, "minor": 0, "info": 0}
+    by_type = {}
+    for e in norm:
+        summary[e["severity"]] = summary.get(e["severity"], 0) + 1
+        if e["type"]:
+            by_type[e["type"]] = by_type.get(e["type"], 0) + 1
+    summary["by_type"] = by_type
+    return {
+        "generated_at": now_iso(),
+        "source": "ufm",
+        "events": norm,
+        "summary": summary,
+    }
+
+
 def _vendor_from_pn(pn):
     """Best-effort vendor from the transceiver part number prefix."""
     p = (pn or "").upper()
@@ -602,6 +678,8 @@ def main():
     cable_ports = ufm.get("resources/ports?cable_info=true&active=true") or []
     pkeys = ufm.get("resources/pkeys") or []
     modules = ufm.get("resources/modules") or []
+    # Active UFM events/alarms (endpoint name varies by version; best-effort).
+    events_raw = ufm.get("app/events") or ufm.get("resources/alarms") or []
 
     by_guid, lid_by_guid = build_indexes(systems, ports)
     ufm_host = args.ufm_url.split("//")[-1].split("/")[0]
@@ -613,6 +691,7 @@ def main():
         "ib_pkey.json": build_pkey(ufm, pkeys, by_guid),
         "ib_sharp_status.json": build_sharp(modules, by_guid),
         "transceiver_inventory.json": build_transceiver(cable_ports, by_guid),
+        "ib_ufm_events.json": build_ufm_events(events_raw),
     }
 
     results = args.results_dir
@@ -682,9 +761,10 @@ def main():
 
     topo = bundles["ib_topology.json"]["summary"]
     le = bundles["ib_link_errors.json"]["summary"]
+    ev_sum = bundles["ib_ufm_events.json"]["summary"]
     print(f"UFM adapter OK: {topo['switches']} switches, {topo['hcas']} HCAs, "
           f"{topo['total_links']} links, {le['critical']} critical / {le['warning']} warning ports, "
-          f"{len(pkeys)} pkeys")
+          f"{len(pkeys)} pkeys, {ev_sum['total']} UFM events ({ev_sum['critical']} crit)")
     return 0
 
 

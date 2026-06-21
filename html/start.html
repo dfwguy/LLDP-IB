@@ -394,6 +394,22 @@
             <div class="health-components" id="health-components"></div>
         </div>
 
+        <!-- AI fabric analysis (autonomous, hourly via lldpq-ai-analyze) -->
+        <div class="health-card" id="ai-health-card" style="display:none; border-left-color:#4fc3f7;">
+            <div class="health-top">
+                <div style="flex:1; min-width:280px;">
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                        <span style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;">AI Fabric Analysis</span>
+                        <span id="ai-health-age" style="font-size:11px;color:#666;"></span>
+                    </div>
+                    <div id="ai-health-body" style="color:#d4d4d4;font-size:13px;line-height:1.55;white-space:pre-wrap;"></div>
+                </div>
+                <div style="align-self:flex-start;">
+                    <a onclick="navTo('ai.html')" style="cursor:pointer; display:inline-block; padding:8px 14px; border:1px solid #4fc3f7; color:#4fc3f7; border-radius:6px; font-size:12px; white-space:nowrap;">Open AI Assistant →</a>
+                </div>
+            </div>
+        </div>
+
         <!-- Top fabric stats -->
         <div class="dashboard-stats">
             <div class="dashboard-stats-title">Fabric Overview</div>
@@ -960,12 +976,34 @@
         }
 
         // Auth check then load
+        async function loadAIHealth() {
+            // Autonomous AI analysis card (read-only). Stays hidden when AI isn't
+            // configured or no analysis has run yet.
+            try {
+                const r = await fetch('/ai-api.sh?action=get-analysis', { cache: 'no-store' });
+                const d = await r.json();
+                if (!d || !d.success || !d.analysis) return;
+                const card = document.getElementById('ai-health-card');
+                const body = document.getElementById('ai-health-body');
+                const age = document.getElementById('ai-health-age');
+                const lines = d.analysis.split('\n').filter(l => l.trim()).slice(0, 8);
+                let text = lines.join('\n').replace(/[#*`]/g, '');
+                if (text.length > 700) text = text.slice(0, 700) + '…';
+                body.textContent = text;
+                const mins = Math.round((d.age_seconds || 0) / 60);
+                age.textContent = d.stale ? `(stale — ${mins} min old)` : `(updated ${mins} min ago)`;
+                card.style.borderLeftColor = d.stale ? '#ff9800' : '#4fc3f7';
+                card.style.display = '';
+            } catch (e) { /* AI not configured -> leave hidden */ }
+        }
+
         async function init() {
             if (typeof LLDPqAuth !== 'undefined') {
                 const ok = await LLDPqAuth.check();
                 if (!ok) return;
             }
             await loadOverview();
+            loadAIHealth();
         }
 
         init();

@@ -22,5 +22,8 @@ if [[ "$AI_PROVIDER" == "ollama" ]]; then
     fi
 fi
 
-# Call the analyze endpoint
-curl -sf "http://localhost/ai-api.sh?action=analyze" > /dev/null 2>&1
+# Call the analyze endpoint on the configured nginx port. The analyze action accepts
+# unauthenticated calls ONLY from loopback (this cron); external callers still need a
+# session. See the auth guard in ai-api.sh.
+PORT="${LLDPQ_PORT:-80}"
+curl -sf "http://127.0.0.1:${PORT}/ai-api.sh?action=analyze" > /dev/null 2>&1

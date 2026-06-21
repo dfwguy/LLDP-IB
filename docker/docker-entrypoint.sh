@@ -160,6 +160,13 @@ if [ "$LLDPQ_PORT" != "80" ]; then
         echo "  ✓ nginx listening on port ${LLDPQ_PORT} (LLDPQ_PORT override)"
     fi
 fi
+# Persist the port so cron jobs (lldpq-ai-analyze) that source /etc/lldpq.conf can
+# reach nginx on the right port.
+if grep -q '^LLDPQ_PORT=' /etc/lldpq.conf 2>/dev/null; then
+    sed -i "s|^LLDPQ_PORT=.*|LLDPQ_PORT=${LLDPQ_PORT}|" /etc/lldpq.conf
+else
+    echo "LLDPQ_PORT=${LLDPQ_PORT}" >> /etc/lldpq.conf
+fi
 
 # ─── Demo mode (LLDPQ_DEMO=true) ───
 # When set, copies the baked /opt/lldpq-demo baseline into the runtime
@@ -233,13 +240,15 @@ elif [ "$DATA_SOURCE" = "ufm" ] || [ "$DATA_SOURCE" = "hybrid" ]; then
     fi
     cat > /etc/cron.d/lldpq << CRON
 # LLDPq-IB ${DATA_SOURCE} mode -- fabric data from UFM REST
-*/10 * * * * lldpq cd /home/lldpq/lldpq && python3 ufm-adapter.py >/dev/null 2>&1 ; python3 generate_ib_topology.py >/dev/null 2>&1 ; sudo /home/lldpq/lldpq/ib-local-scan.sh >/dev/null 2>&1
+*/10 * * * * lldpq cd /home/lldpq/lldpq && python3 ufm-adapter.py >/dev/null 2>&1 ; python3 generate_ib_topology.py >/dev/null 2>&1 ; sudo /home/lldpq/lldpq/ib-local-scan.sh >/dev/null 2>&1 ; python3 check_alerts.py >/dev/null 2>&1
 ${HW_LINE}
 * * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
 0 */6 * * * lldpq cd /home/lldpq/lldpq && bash get-configs.sh > /dev/null 2>&1
+# Autonomous AI fabric analysis (hourly; no-op unless an AI provider is configured)
+0 * * * * lldpq /usr/local/bin/lldpq-ai-analyze > /dev/null 2>&1
 CRON
     chmod 644 /etc/cron.d/lldpq
-    echo "  ✓ Cron: ${DATA_SOURCE} mode (UFM adapter every 10m$([ "$DATA_SOURCE" = "hybrid" ] && echo ' + switch HW every 15m'))"
+    echo "  ✓ Cron: ${DATA_SOURCE} mode (UFM adapter every 10m$([ "$DATA_SOURCE" = "hybrid" ] && echo ' + switch HW every 15m') + alerts + hourly AI analysis)"
 else
     cat > /etc/cron.d/lldpq << 'CRON'
 # LLDPq-IB full run (ib-assets + ib-monitor + alerts) - every 10 minutes
@@ -248,6 +257,8 @@ else
 * * * * * lldpq /usr/local/bin/lldpq-trigger > /dev/null 2>&1
 # Config backup - every 12 hours
 0 */12 * * * lldpq /usr/local/bin/get-conf > /dev/null 2>&1
+# Autonomous AI fabric analysis (hourly; no-op unless an AI provider is configured)
+0 * * * * lldpq /usr/local/bin/lldpq-ai-analyze > /dev/null 2>&1
 CRON
     chmod 644 /etc/cron.d/lldpq
 fi

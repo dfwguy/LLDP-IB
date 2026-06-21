@@ -172,10 +172,17 @@
             Analyze
             <span class="analysis-badge" id="analysisBadge">!</span>
         </button>
+        <button class="btn btn-secondary btn-sm" onclick="generateReport()" title="Generate a structured fabric health report (markdown)">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            Report
+        </button>
         <button class="btn btn-secondary btn-sm" onclick="exportChat()" title="Export chat as markdown">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
         </button>
         <button class="btn btn-secondary btn-sm" onclick="clearChat()">Clear</button>
+        <button class="btn-icon" onclick="showAudit()" title="AI command audit log">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM8 12h8v2H8v-2zm0 4h5v2H8v-2zm0-8h5v2H8V8z"/></svg>
+        </button>
         <button class="btn-icon" onclick="toggleSettings()" title="Settings">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.6 3.6 0 0112 15.6z"/></svg>
         </button>
@@ -360,17 +367,39 @@ async function loadContext() {
     }
 }
 
+// Staged progress text. fcgiwrap can't stream tokens, so instead of a silent wait we
+// advance through the phases the backend actually goes through (context build -> live
+// tool calls -> compose). Honest, low-cost perceived-latency improvement.
+let _typingTimer = null;
+const _typingStages = [
+    'Reading fabric data…',
+    'Checking SM & link health…',
+    'Querying live switches (if needed)…',
+    'Analyzing…',
+    'Composing answer…',
+];
+
 function showTypingIndicator() {
     const area = document.getElementById('chatArea');
     const div = document.createElement('div');
     div.className = 'typing-indicator';
     div.id = 'typingIndicator';
-    div.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+    div.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>' +
+        '<span id="typingStage" style="margin-left:10px;color:#888;font-size:12px;align-self:center;"></span>';
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
+    let i = 0;
+    const stage = div.querySelector('#typingStage');
+    if (stage) stage.textContent = _typingStages[0];
+    if (_typingTimer) clearInterval(_typingTimer);
+    _typingTimer = setInterval(() => {
+        i = Math.min(i + 1, _typingStages.length - 1);
+        if (stage) stage.textContent = _typingStages[i];
+    }, 4000);
 }
 
 function removeTypingIndicator() {
+    if (_typingTimer) { clearInterval(_typingTimer); _typingTimer = null; }
     const el = document.getElementById('typingIndicator');
     if (el) el.remove();
 }
@@ -819,6 +848,69 @@ async function runAnalysis() {
     } else {
         showToast('Analysis failed: ' + (data.error || ''), 'error');
     }
+}
+
+// ===================== STRUCTURED REPORT =====================
+function downloadMarkdown(text, filename) {
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+async function generateReport() {
+    if (isStreaming) return;
+    const suggestions = document.getElementById('suggestions');
+    if (suggestions) suggestions.remove();
+    showToast('Generating fabric health report…', 'info');
+    isStreaming = true;
+    const btn = document.getElementById('btnSend');
+    btn.disabled = true;
+    showTypingIndicator();
+    try {
+        const data = await apiCall('report');
+        removeTypingIndicator();
+        if (data.success && data.report) {
+            addMessage('system', 'Structured fabric health report:');
+            const div = addMessage('assistant', data.report);
+            linkDeviceNames(div);
+            chatHistory.push({ role: 'assistant', content: data.report });
+            saveChatToStorage();
+            downloadMarkdown(data.report, `lldpq-ib-fabric-report-${new Date().toISOString().slice(0, 10)}.md`);
+            showToast('Report generated & downloaded', 'success');
+        } else {
+            addMessage('system', 'Report failed: ' + (data.error || 'no response'));
+        }
+    } catch (e) {
+        removeTypingIndicator();
+        addMessage('system', 'Report error: ' + e.message);
+    }
+    isStreaming = false;
+    btn.disabled = false;
+}
+
+// ===================== AI COMMAND AUDIT (admin) =====================
+async function showAudit() {
+    const data = await apiCall('get-audit');
+    if (!data || !data.success) {
+        showToast((data && data.error) || 'Audit unavailable (admin only)', 'error');
+        return;
+    }
+    const entries = data.entries || [];
+    if (!entries.length) {
+        showToast('No AI command audit entries yet', 'info');
+        return;
+    }
+    let md = `**AI live-command audit** — most recent ${Math.min(entries.length, 50)}:\n\n`;
+    entries.slice(0, 50).forEach(e => {
+        md += `- \`${e.ts || '?'}\` ${e.user || '?'} — **${e.kind || 'RUN'}** ${e.device || ''}: ` +
+              `\`${(e.command || '').replace(/`/g, "'")}\` → ${e.ok ? 'OK' : 'FAIL'}\n`;
+    });
+    addMessage('system', 'AI command audit log:');
+    addMessage('assistant', md);
 }
 
 // ===================== PREDEFINED PROMPTS (IB edition) =====================
