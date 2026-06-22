@@ -23,6 +23,8 @@ body {
 
 .page-header {
     display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
@@ -47,8 +49,14 @@ body {
 .card-value { font-size: 28px; font-weight: bold; }
 .card-label { font-size: 12px; color: #888; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
 
+/* Responsive: stop the 4-up summary cards from squishing on narrow windows. */
+@media (max-width: 760px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 .filter-bar {
     display: flex;
+    flex-wrap: wrap;
     gap: 15px;
     margin-bottom: 15px;
     align-items: flex-end;
@@ -67,7 +75,7 @@ body {
 }
 .filter-group select:focus, .filter-group input:focus { border-color: #76b900; outline: none; }
 
-.action-buttons { display: flex; gap: 10px; align-items: center; }
+.action-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .btn {
     padding: 7px 16px;
     border: none;
@@ -85,7 +93,9 @@ body {
 .btn-secondary { background: linear-gradient(0deg, #0288d1 0%, #03a9f4 100%); }
 .btn-secondary:hover { background: linear-gradient(0deg, #03a9f4 0%, #29b6f6 100%); }
 
-.table-container { background: #252526; border-radius: 6px; overflow: hidden; }
+/* overflow-x:auto keeps a wide table's scroll INSIDE its own container so the
+   whole page never scrolls left-right (field-engineer note). */
+.table-container { background: #252526; border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th {
     background: #2d2d2d;

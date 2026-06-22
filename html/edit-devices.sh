@@ -37,7 +37,34 @@ elif [ "$METHOD" = "POST" ]; then
     else
         POST_DATA=$(cat)
     fi
-    
+
+    # Validate-only mode (live lint in the editor): check YAML WITHOUT saving and
+    # return the offending line number so the UI can flag it as you type.
+    MODE=$(echo "$POST_DATA" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("mode",""))
+except: print("")' 2>/dev/null)
+    if [ "$MODE" = "validate" ]; then
+        printf '%s' "$POST_DATA" | python3 -c '
+import sys, json
+try:
+    content = json.loads(sys.stdin.read()).get("content", "")
+except Exception:
+    print(json.dumps({"success": True, "valid": False, "error": "bad request"})); sys.exit(0)
+try:
+    import yaml
+    yaml.safe_load(content)
+    print(json.dumps({"success": True, "valid": True}))
+except yaml.YAMLError as e:
+    mark = getattr(e, "problem_mark", None)
+    line = (mark.line + 1) if mark is not None else None
+    msg = getattr(e, "problem", None) or str(e).splitlines()[0]
+    print(json.dumps({"success": True, "valid": False, "line": line, "error": str(msg)[:160]}))
+except Exception as e:
+    print(json.dumps({"success": True, "valid": False, "error": str(e)[:160]}))
+'
+        exit 0
+    fi
+
     # Extract content from JSON using Python
     CONTENT=$(echo "$POST_DATA" | python3 -c '
 import sys, json

@@ -31,7 +31,7 @@
                 <button onclick="closeDevicesYamlEditor()" style="background:none;border:0;color:#aaa;font-size:22px;cursor:pointer;line-height:1;padding:0 6px;">&times;</button>
             </div>
             <div style="flex:1;display:flex;flex-direction:column;padding:12px 20px;gap:8px;min-height:0;">
-                <textarea id="devices-yaml-textarea" spellcheck="false" placeholder="Loading..."
+                <textarea id="devices-yaml-textarea" spellcheck="false" placeholder="Loading..." data-yaml-lint="devices-yaml-status"
                     style="flex:1;background:#111;color:#d4d4d4;border:1px solid #333;border-radius:4px;padding:12px;font-family:'Cascadia Code',Consolas,'Courier New',monospace;font-size:13px;line-height:1.5;resize:none;tab-size:2;"></textarea>
             </div>
             <div style="padding:12px 20px;background:#252526;border-top:1px solid #3c3c3c;border-radius:0 0 8px 8px;display:flex;align-items:center;justify-content:space-between;">
@@ -90,12 +90,110 @@
         </table>
     </div>
 
+    <!-- Host Channel Adapters (endpoints) -- HCAs are part of the fabric (they
+         terminate IB links) but are not SSH-probed, so they come from the UFM
+         topology rather than assets.ini. -->
+    <div class="page-header" style="margin-top:26px;">
+        <div>
+            <div class="page-title" style="font-size:18px;">Host Channel Adapters (endpoints)</div>
+            <div class="last-updated" id="hca-count"></div>
+        </div>
+        <div class="filter-bar" style="margin:0;">
+            <div class="filter-group" style="min-width:240px;">
+                <label>Search</label>
+                <input type="text" id="hca-search" placeholder="HCA hostname, GUID, switch..." oninput="renderHcaTable()" autocomplete="off">
+            </div>
+        </div>
+    </div>
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Hostname</th>
+                    <th>GUID</th>
+                    <th>LID</th>
+                    <th>Model</th>
+                    <th>Connected to (switch : port)</th>
+                </tr>
+            </thead>
+            <tbody id="hca-table">
+                <tr><td colspan="5"><div class="loading"><div class="spinner"></div>Loading endpoints...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+
 <script>
 let allAssets = [];        // merged: hostname, ip, role, model, serial, release, uptime, reachable
 let sortField = 'hostname';
 let sortAsc = true;
 
-document.addEventListener('DOMContentLoaded', loadAssets);
+document.addEventListener('DOMContentLoaded', () => { loadAssets(); loadHcas(); });
+
+// ===================== HCA endpoints (from UFM topology) =====================
+let allHcas = [];   // {hostname, guid, lid, model, peers:[{switch, port}]}
+
+async function loadHcas() {
+    const tbody = document.getElementById('hca-table');
+    try {
+        const r = await fetch('/monitor-results/ib_topology.json', {cache: 'no-store'});
+        if (!r.ok) throw new Error('no topology');
+        const topo = await r.json();
+        const nodes = topo.nodes || [];
+        const links = topo.links || [];
+        // Map each HCA hostname -> its switch-side peers (switch : switch-port).
+        const peers = {};
+        for (const l of links) {
+            const s = l.source_desc, t = l.target_desc;
+            if (l.target_type === 'hca' && t) {
+                (peers[t] = peers[t] || []).push({ sw: s, port: l.source_port });
+            } else if (l.source_type === 'hca' && s) {
+                (peers[s] = peers[s] || []).push({ sw: t, port: l.target_port });
+            }
+        }
+        allHcas = nodes.filter(n => n.type === 'hca').map(n => ({
+            hostname: n.hostname || n.description || '-',
+            guid: n.guid || '-',
+            lid: n.lid || '-',
+            model: n.model || '-',
+            peers: peers[n.hostname] || peers[n.description] || [],
+        })).sort((a, b) => String(a.hostname).localeCompare(String(b.hostname)));
+        renderHcaTable();
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No endpoint data</h3>' +
+            '<p>HCA endpoints come from the UFM topology (ib_topology.json). Run a collection first.</p></div></td></tr>';
+        document.getElementById('hca-count').textContent = '';
+    }
+}
+
+function renderHcaTable() {
+    const tbody = document.getElementById('hca-table');
+    const search = (document.getElementById('hca-search').value || '').trim().toLowerCase();
+    let rows = allHcas;
+    if (search) {
+        rows = rows.filter(h => {
+            const hay = `${h.hostname} ${h.guid} ${h.peers.map(p => p.sw).join(' ')}`.toLowerCase();
+            return hay.includes(search);
+        });
+    }
+    document.getElementById('hca-count').textContent =
+        `${allHcas.length} HCA endpoint${allHcas.length === 1 ? '' : 's'} in the fabric`;
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="no-data"><h3>No HCA matches filter</h3></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(h => {
+        const conns = h.peers.length
+            ? h.peers.map(p => `<a href="device.html?device=${encodeURIComponent(p.sw)}" style="color:#76b900;text-decoration:none;">${p.sw}</a> : ${p.port}`).join('<br>')
+            : '<span style="color:#777;">-</span>';
+        return `<tr>
+            <td><strong>${h.hostname}</strong></td>
+            <td class="mono">${h.guid}</td>
+            <td class="mono">${h.lid}</td>
+            <td>${h.model}</td>
+            <td>${conns}</td>
+        </tr>`;
+    }).join('');
+}
 
 // ===================== devices.yaml editor modal =====================
 async function openDevicesYamlEditor() {

@@ -793,3 +793,61 @@ document.addEventListener('click', function(e) {
         }
     }
 });
+
+// When a protected page is opened DIRECTLY (e.g. someone shares the URL of
+// ufm-status.html), it renders without the app sidebar -> the user is stranded
+// with no way back to the menu. Inject a small floating "menu" link in that case.
+// Inside the app shell the page loads in an iframe (window.top !== self), so the
+// link is hidden there. Skipped on the shell/login pages themselves.
+document.addEventListener('DOMContentLoaded', function() {
+    try {
+        if (window.top !== window.self) return;            // inside the app shell iframe
+        const path = location.pathname.replace(/\/+$/, '');
+        if (path === '' || /\/(index|login)\.html$/.test(path)) return;
+        if (document.getElementById('lldpq-home-fab')) return;
+        const a = document.createElement('a');
+        a.id = 'lldpq-home-fab';
+        a.href = '/index.html';
+        a.textContent = '\u2630  LLDPq Menu';
+        a.title = 'Back to the LLDPq-IB menu';
+        a.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:99999;'
+            + "background:#1e1e1e;color:#76b900;border:1px solid #76b900;border-radius:6px;"
+            + "padding:7px 12px;font:600 12px/1 'Segoe UI',Tahoma,sans-serif;"
+            + 'text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.4);opacity:0.85;';
+        a.addEventListener('mouseover', function(){ a.style.opacity = '1'; });
+        a.addEventListener('mouseout',  function(){ a.style.opacity = '0.85'; });
+        document.body.appendChild(a);
+    } catch (e) { /* non-fatal */ }
+});
+
+// Live YAML lint for devices.yaml editors. Any <textarea data-yaml-lint="statusElId">
+// gets debounced validation via /edit-devices (mode:validate) WITHOUT saving, so the
+// operator sees "invalid YAML on line N" as they type (on top of the save-time check).
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('textarea[data-yaml-lint]').forEach(function(ta) {
+        const statusId = ta.getAttribute('data-yaml-lint');
+        let timer = null;
+        ta.addEventListener('input', function() {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(async function() {
+                const el = document.getElementById(statusId);
+                if (!el) return;
+                try {
+                    const r = await fetch('/edit-devices', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: ta.value, mode: 'validate' }),
+                    });
+                    const d = await r.json().catch(() => ({}));
+                    if (d && d.valid) {
+                        el.style.color = '#4caf50';
+                        el.textContent = '\u2713 valid YAML';
+                    } else if (d && d.valid === false) {
+                        el.style.color = '#f44336';
+                        el.textContent = '\u2717 ' + (d.line ? 'line ' + d.line + ': ' : '') + (d.error || 'invalid YAML');
+                    }
+                } catch (e) { /* ignore transient errors */ }
+            }, 450);
+        });
+    });
+});

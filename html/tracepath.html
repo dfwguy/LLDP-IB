@@ -104,7 +104,7 @@
     <div class="mode-row">
         <span>Mode:</span>
         <label><input type="radio" name="mode" value="bfs"      checked> Topology BFS (cached, fast)</label>
-        <label><input type="radio" name="mode" value="ibtracert"> ibtracert (live, via SSH to a switch)</label>
+        <label><input type="radio" name="mode" value="ibtracert"> ibtracert (live, runs on the UFM appliance)</label>
     </div>
 
     <div class="summary-grid" id="summary" style="display:none;">
@@ -250,8 +250,8 @@ async function trace() {
                 // Backend not available (e.g. demo) -- fall back to BFS with a notice
                 await LLDPqUI.alert({
                     title: 'Live ibtracert unavailable',
-                    message: 'No reachable switch was able to run <code>ib ibtracert</code> '
-                           + '(maybe DEMO_MODE is on or no IB switches are configured). '
+                    message: 'Could not run <code>ibtracert</code> on the UFM appliance '
+                           + '(UFM SSH not configured, or demo mode). '
                            + 'Falling back to topology BFS for the path computation.',
                     type: 'info',
                 });

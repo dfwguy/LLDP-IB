@@ -120,7 +120,7 @@
 
     <div id="devices-editor" style="display:none;margin-top:18px;" class="setup-card">
         <h3>Edit devices.yaml</h3>
-        <textarea class="setup-textarea" id="devices-yaml"></textarea>
+        <textarea class="setup-textarea" id="devices-yaml" data-yaml-lint="devices-status"></textarea>
         <div class="setup-actions">
             <button class="primary" onclick="saveDevices()">Save devices.yaml</button>
             <button class="secondary" onclick="closeDevicesEditor()">Close</button>
@@ -301,15 +301,50 @@ async function setupUfmSsh() {
     }
 }
 
+let _collPoll = null;
 async function queueCollection() {
+    const el = document.getElementById('collection-status');
+    if (_collPoll) { clearInterval(_collPoll); _collPoll = null; }
+    el.style.color = '#888'; el.textContent = 'Queuing…';
     const r = await fetch('/setup-api.sh?action=queue-collection', {method:'POST'});
     const data = await r.json().catch(() => ({}));
-    const el = document.getElementById('collection-status');
-    if (data.success) {
-        el.style.color = '#4caf50'; el.textContent = data.message || 'Queued';
-    } else {
+    if (!data.success) {
         el.style.color = '#ff9800'; el.textContent = data.error || 'Could not queue collection';
+        return;
     }
+    el.style.color = '#4caf50';
+    el.textContent = 'Queued — waiting for the trigger daemon…';
+
+    // Poll until the daemon finishes the pass (or time out after ~4 min) so the
+    // operator gets a real "complete" signal instead of a static "queued" line.
+    const started = Date.now();
+    _collPoll = setInterval(async () => {
+        if (Date.now() - started > 240000) {
+            clearInterval(_collPoll); _collPoll = null;
+            el.style.color = '#ff9800';
+            el.textContent = 'Still queued after 4 min — is the trigger daemon running? (cron: lldpq-trigger)';
+            return;
+        }
+        let s;
+        try {
+            const rs = await fetch('/setup-api.sh?action=collection-status', {cache:'no-store'});
+            s = await rs.json();
+        } catch (e) { return; }
+        if (!s || !s.success) return;
+        if (s.state === 'running') {
+            el.style.color = '#4fc3f7';
+            el.textContent = 'Collecting fabric data…';
+        } else if (s.state === 'pending') {
+            el.style.color = '#4caf50';
+            el.textContent = 'Queued — waiting for the trigger daemon…';
+        } else if (s.state === 'done') {
+            clearInterval(_collPoll); _collPoll = null;
+            const when = s.assets_updated ? new Date(s.assets_updated * 1000).toLocaleTimeString('sv-SE') : '';
+            el.style.color = '#4caf50';
+            el.innerHTML = 'Collection complete' + (when ? ' — assets updated ' + when : '') +
+                '. <a href="start.html" style="color:#76b900;">Open Fabric →</a>';
+        }
+    }, 3000);
 }
 
 function copyText(id) {

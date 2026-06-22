@@ -154,6 +154,70 @@ PY
         echo '{"success": true, "message": "Collection queued. lldpq-trigger will run ib-assets.sh and ib-monitor.sh within about one minute."}'
         ;;
 
+    collection-status)
+        # Report progress of a queued first-collection so the UI can show when it
+        # actually finishes (instead of a static "queued" message). State machine:
+        #   pending  -> trigger written but the daemon hasn't started it yet
+        #   running  -> the daemon holds assets_running.lock (PID alive)
+        #   done     -> trigger consumed (.last_*_trigger_check >= queued time) and no lock
+        export LLDPQ_DIR WEB_ROOT
+        python3 <<'PY'
+import json, os
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0); return True
+    except Exception:
+        return False
+
+def read(p):
+    try:
+        with open(p) as f: return f.read().strip()
+    except Exception:
+        return ''
+
+def mtime(p):
+    try: return int(os.path.getmtime(p))
+    except Exception: return 0
+
+lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+web_root = os.environ.get('WEB_ROOT', '/var/www/html')
+
+a_trig = mtime('/tmp/.assets_web_trigger')
+m_trig = mtime('/tmp/.monitor_web_trigger')
+a_check = int(read(os.path.join(lldpq_dir, '.last_assets_trigger_check')) or 0)
+m_check = int(read(os.path.join(lldpq_dir, '.last_monitor_trigger_check')) or 0)
+
+assets_lock = '/tmp/assets_running.lock'
+assets_running = bool(os.path.exists(assets_lock) and alive(read(assets_lock)))
+# The monitor pass has no lock file; infer it is mid-run when its trigger has been
+# consumed but the assets trigger hasn't started yet (same daemon loop iteration).
+monitor_running = bool(m_trig and (m_check >= m_trig) and a_trig and (a_check < a_trig))
+running = assets_running or monitor_running
+
+# "consumed" = the daemon has started processing the most recent queued triggers.
+queued = bool(a_trig or m_trig)
+consumed = ((a_check >= a_trig) and (m_check >= m_trig)) if queued else True
+
+assets_updated = 0
+for p in (os.path.join(lldpq_dir, 'assets.ini'), os.path.join(web_root, 'assets.ini')):
+    if os.path.exists(p):
+        assets_updated = mtime(p); break
+
+if running:
+    state = 'running'
+elif not consumed:
+    state = 'pending'
+else:
+    state = 'done'
+
+print(json.dumps({
+    'success': True, 'state': state, 'running': running, 'consumed': consumed,
+    'queued': queued, 'assets_updated': assets_updated,
+}))
+PY
+        ;;
+
     *)
         echo "{\"success\": false, \"error\": \"Unknown setup action: ${ACTION}\"}"
         ;;

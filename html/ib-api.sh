@@ -410,11 +410,85 @@ PYTHON_END
     # Body: JSON { src_guid: "0x...", dst_guid: "0x..." }
     # -------------------------------------------------------------------
     ibtracert)
+        # Live ibtracert runs on the UFM appliance (it has native ibutils). CLI-only
+        # MLNX-OS switches cannot run it, so we SSH to UFM_SSH_HOST (the same host +
+        # collector key used by the Fabric Diagnostic). Falls back to BFS in the UI
+        # when UFM SSH is not configured.
         read -r POST_DATA 2>/dev/null || true
-        # Live ibtracert needs switch-side ib* utilities, which CLI-only MLNX-OS
-        # does NOT expose (the `ib` keyword is an ibdiagnet wrapper, and SSH exec
-        # is rejected). The Tracepath UI falls back to topology BFS on this reply.
-        echo '{"success": false, "error": "Live ibtracert is unavailable on CLI-only MLNX-OS switches; using topology BFS instead. For live routing run the Fabric Diagnostic (ibdiagnet) on the UFM appliance."}'
+        export POST_DATA
+        export UFM_SSH_HOST="${UFM_SSH_HOST:-}" UFM_SSH_USER="${UFM_SSH_USER:-root}"
+        export LLDPQ_USER="${LLDPQ_USER:-lldpq}"
+        python3 << 'PYTHON_END'
+import json, os, re, subprocess
+
+try:
+    body = json.loads(os.environ.get('POST_DATA', '') or '{}')
+except Exception:
+    body = {}
+src = str(body.get('src_guid', '')).strip()
+dst = str(body.get('dst_guid', '')).strip()
+
+guid_re = re.compile(r'^0x[0-9a-fA-F]{1,16}$')
+if not guid_re.match(src) or not guid_re.match(dst):
+    print(json.dumps({'success': False, 'error': 'Invalid source/destination GUID.'}))
+    raise SystemExit
+
+ufm_host = (os.environ.get('UFM_SSH_HOST', '') or '').strip()
+ufm_user = (os.environ.get('UFM_SSH_USER', 'root') or 'root').strip() or 'root'
+if not ufm_host:
+    print(json.dumps({'success': False,
+        'error': 'Live ibtracert needs UFM SSH access. Configure UFM SSH on the Setup '
+                 'page (UFM_SSH_HOST) or use topology BFS. CLI-only MLNX-OS switches '
+                 'cannot run ibtracert.'}))
+    raise SystemExit
+
+LLDPQ_USER = os.environ.get('LLDPQ_USER', 'lldpq')
+try:
+    me = subprocess.run(['id', '-un'], capture_output=True, text=True, timeout=5).stdout.strip()
+except Exception:
+    me = ''
+ssh = (['ssh'] if me == LLDPQ_USER else ['sudo', '-u', LLDPQ_USER, 'ssh'])
+ssh += ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR',
+        '-o', 'ConnectTimeout=12']
+remote = f'timeout 35 ibtracert -G {src} {dst}'
+try:
+    r = subprocess.run(ssh + [f'{ufm_user}@{ufm_host}', remote],
+                       capture_output=True, text=True, timeout=45)
+except subprocess.TimeoutExpired:
+    print(json.dumps({'success': False, 'error': 'ibtracert on UFM timed out'}))
+    raise SystemExit
+except Exception as e:
+    print(json.dumps({'success': False, 'error': f'SSH error: {e}'}))
+    raise SystemExit
+
+if r.returncode != 0 and not r.stdout.strip():
+    print(json.dumps({'success': False,
+        'error': 'ibtracert on UFM failed: ' + (r.stderr or r.stdout or 'no output')[:300]}))
+    raise SystemExit
+
+# ibtracert output (one block per hop):
+#   [N] -> <type> port {0x..nguid..}[M] lid <L>
+hop_re = re.compile(r'-\>\s+\w+\s+port\s+\{(?P<guid>0x[0-9a-fA-F]+)\}\[(?P<rp>\d+)\]', re.IGNORECASE)
+out_re = re.compile(r'\[(?P<lp>\d+)\]\s+->', re.IGNORECASE)
+hops = []
+local_port = None
+for line in r.stdout.splitlines():
+    m_out = out_re.search(line)
+    if m_out:
+        local_port = int(m_out.group(1))
+    m_hop = hop_re.search(line)
+    if m_hop:
+        hops.append({'to_guid': m_hop.group('guid'), 'lp': local_port,
+                     'rp': int(m_hop.group('rp')), 'speed': ''})
+        local_port = None
+
+print(json.dumps({
+    'success': True, 'source': 'ufm', 'via': f'{ufm_user}@{ufm_host}',
+    'src_guid': src, 'dst_guid': dst, 'hop_count': len(hops),
+    'path': hops, 'raw': r.stdout[-1000:],
+}))
+PYTHON_END
         ;;
 
     ibtracert-legacy-disabled)

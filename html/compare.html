@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="shortcut icon" href="/png/lldpq-logo.svg">
+    <title>..::LLDPQ-IB:: Compare</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="css/lldpq-ib.css">
+    <script src="css/auth.js"></script>
+    <style>
+        .mode-tabs { display:flex; gap:8px; margin-bottom:16px; }
+        .mode-tab { padding:8px 16px; background:#252526; border:1px solid #3a3a3a; border-radius:6px; cursor:pointer; font-size:13px; color:#d4d4d4; }
+        .mode-tab.active { background:#1a2e00; border-color:#76b900; color:#76b900; font-weight:600; }
+        .cmp-note { color:#888; font-size:12px; margin-bottom:12px; }
+        .matrix td.odd { background:#3a2a00; color:#ffc107; font-weight:600; }
+        .matrix td.unreach { color:#777; }
+        .matrix tr.row-unreach { opacity:0.55; }
+        .legend { display:flex; gap:16px; align-items:center; font-size:12px; color:#888; margin:8px 0 14px; }
+        .legend .sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin-right:5px; }
+        /* command mode */
+        .cmp-pick { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+        .cmp-chip { padding:6px 11px; background:#252526; border:1px solid #3a3a3a; border-radius:6px; cursor:pointer; font-size:12px; color:#d4d4d4; }
+        .cmp-chip.active { background:#1a2e00; border-color:#76b900; color:#76b900; }
+        .dev-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:6px; margin-bottom:14px; }
+        .dev-cell { display:flex; align-items:center; gap:8px; padding:7px 10px; background:#252526; border:1px solid #333; border-radius:5px; cursor:pointer; font-size:13px; }
+        .dev-cell input { accent-color:#76b900; }
+        .cmp-runbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+        .cmp-runbar input[type=text] { flex:1; min-width:240px; padding:9px 12px; background:#1a1a1a; border:1px solid #555; border-radius:6px; color:#d4d4d4; font-size:13px; font-family:'Cascadia Code',Consolas,monospace; }
+        .cmp-runbar select { padding:9px 12px; background:#1a1a1a; border:1px solid #555; border-radius:6px; color:#d4d4d4; font-size:13px; }
+        .grp { background:#252526; border:1px solid #3a3a3a; border-radius:6px; margin-bottom:10px; overflow:hidden; }
+        .grp.outlier { border-color:#ff9800; }
+        .grp-head { padding:10px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; font-size:13px; }
+        .grp-badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; background:#1a2e00; color:#76b900; white-space:nowrap; }
+        .grp.outlier .grp-badge { background:#3a2a00; color:#ffc107; }
+        .grp-devs { color:#d4d4d4; }
+        .grp-out { display:none; margin:0; padding:12px; background:#111; color:#d4d4d4; font-family:'Cascadia Code',Consolas,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; max-height:420px; overflow:auto; border-top:1px solid #333; }
+        .grp.open .grp-out { display:block; }
+        .spin { color:#888; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <div>
+            <div class="page-title">Compare Across Devices</div>
+            <div class="last-updated">Spot the "odd" device — version/field drift, or differing command output.</div>
+        </div>
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="location.reload()">Refresh</button>
+        </div>
+    </div>
+
+    <div class="mode-tabs">
+        <div class="mode-tab active" id="tab-fields" onclick="setMode('fields')">Fields</div>
+        <div class="mode-tab" id="tab-command" onclick="setMode('command')">Command output</div>
+    </div>
+
+    <!-- ============ FIELDS MODE ============ -->
+    <div id="mode-fields">
+        <div class="cmp-note">Each column's majority value is the baseline; cells that differ are highlighted — those are your outliers (e.g. a switch on a different MLNX-OS release).</div>
+        <div class="legend"><span><span class="sw" style="background:#3a2a00;"></span>differs from majority</span></div>
+        <div class="table-container">
+            <table class="data-table matrix">
+                <thead>
+                    <tr>
+                        <th>Hostname</th><th>Role</th><th>Model</th><th>MLNX-OS</th><th>Serial</th><th>Uptime</th><th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="matrix-body"><tr><td colspan="7"><div class="loading"><div class="spinner"></div>Loading…</div></td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ============ COMMAND MODE ============ -->
+    <div id="mode-command" style="display:none;">
+        <div class="cmp-note">Run ONE read-only command on the selected switches, then group identical outputs. Smaller groups are flagged as outliers.</div>
+        <div class="cmp-pick">
+            <div class="cmp-chip" onclick="pickAll(true)">Select all</div>
+            <div class="cmp-chip" onclick="pickAll(false)">Clear</div>
+            <span id="role-chips"></span>
+        </div>
+        <div class="dev-list" id="dev-list"></div>
+        <div class="cmp-runbar">
+            <select id="preset" onchange="applyPreset()">
+                <option value="">Preset commands…</option>
+                <option value="show version">show version</option>
+                <option value="show inventory">show inventory</option>
+                <option value="show interfaces ib status">show interfaces ib status</option>
+                <option value="show ib sm">show ib sm</option>
+                <option value="show ib partition">show ib partition</option>
+                <option value="show running-config">show running-config</option>
+                <option value="show health-report">show health-report</option>
+                <option value="show asic-version">show asic-version</option>
+            </select>
+            <input type="text" id="cmd" placeholder="read-only MLNX-OS command (e.g. show version)" autocomplete="off">
+            <button class="btn btn-primary" id="run-btn" onclick="runCompare()">Run &amp; compare</button>
+        </div>
+        <div id="cmd-summary" class="cmp-note"></div>
+        <div id="cmd-results"></div>
+    </div>
+
+<script>
+let devices = [];   // {hostname, ip, role}
+let assets = {};    // hostname -> {model, serial, release, uptime}
+const selected = new Set();
+
+document.addEventListener('DOMContentLoaded', async () => {
+    if (typeof LLDPqAuth !== 'undefined') { const ok = await LLDPqAuth.check(); if (!ok) return; }
+    await loadData();
+    renderMatrix();
+    renderDevicePicker();
+});
+
+function setMode(m) {
+    document.getElementById('mode-fields').style.display = m === 'fields' ? '' : 'none';
+    document.getElementById('mode-command').style.display = m === 'command' ? '' : 'none';
+    document.getElementById('tab-fields').classList.toggle('active', m === 'fields');
+    document.getElementById('tab-command').classList.toggle('active', m === 'command');
+}
+
+async function loadData() {
+    const [devResp, iniResp] = await Promise.all([
+        fetch('/ib-api.sh?action=list-devices').catch(() => null),
+        fetch('/assets.ini', {cache:'no-store'}).catch(() => null),
+    ]);
+    try {
+        const d = await devResp.json();
+        if (d && d.success) devices = (d.devices_flat || []).map(x => ({hostname:x.hostname, ip:x.ip, role:x.role}));
+    } catch (e) {}
+    if (iniResp && iniResp.ok) {
+        const text = await iniResp.text();
+        for (const line of text.split('\n')) {
+            if (!line || line.startsWith('#')) continue;
+            const p = line.split('\t');
+            if (p.length < 7) continue;
+            assets[p[0]] = { model:p[2], serial:p[3], release:p[4], uptime:p[6] };
+        }
+    }
+    // Fallback: if list-devices empty, derive from assets.ini
+    if (devices.length === 0) {
+        devices = Object.keys(assets).map(h => ({hostname:h, ip:'', role:'switch'}));
+    }
+}
+
+// ---------- Fields matrix ----------
+function majority(values) {
+    const c = {};
+    values.forEach(v => { if (v && v !== '-') c[v] = (c[v]||0)+1; });
+    let best = null, n = 0;
+    for (const k in c) if (c[k] > n) { n = c[k]; best = k; }
+    return best;
+}
+
+function renderMatrix() {
+    const rows = devices.map(d => {
+        const a = assets[d.hostname] || {};
+        return {
+            hostname: d.hostname, role: d.role || '-',
+            model: a.model || '-', release: a.release || '-',
+            serial: a.serial || '-', uptime: a.uptime || '-',
+            reachable: !!assets[d.hostname],
+        };
+    }).sort((a,b) => a.hostname.localeCompare(b.hostname));
+
+    // Majority per comparable field (only across reachable devices).
+    const reach = rows.filter(r => r.reachable);
+    const majModel   = majority(reach.map(r => r.model));
+    const majRelease = majority(reach.map(r => r.release));
+
+    const tbody = document.getElementById('matrix-body');
+    if (rows.length === 0) { tbody.innerHTML = '<tr><td colspan="7"><div class="no-data"><h3>No devices</h3></div></td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => {
+        const oddModel   = r.reachable && r.model   !== '-' && majModel   && r.model   !== majModel;
+        const oddRelease = r.reachable && r.release !== '-' && majRelease && r.release !== majRelease;
+        const status = r.reachable ? '<span class="badge badge-green">OK</span>' : '<span class="badge badge-red">unreachable</span>';
+        return `<tr class="${r.reachable ? '' : 'row-unreach'}">
+            <td><strong><a href="device.html?device=${encodeURIComponent(r.hostname)}" style="color:#76b900;text-decoration:none;">${r.hostname}</a></strong></td>
+            <td><span class="badge badge-blue">${r.role}</span></td>
+            <td class="${oddModel ? 'odd' : ''}">${r.model}</td>
+            <td class="${oddRelease ? 'odd' : ''}">${r.release}</td>
+            <td class="mono">${r.serial}</td>
+            <td>${r.uptime}</td>
+            <td>${status}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ---------- Command compare ----------
+function renderDevicePicker() {
+    const roles = [...new Set(devices.map(d => d.role || 'other'))].sort();
+    document.getElementById('role-chips').innerHTML = roles.map(r =>
+        `<span class="cmp-chip" onclick="pickRole('${r}')">${r}</span>`).join('');
+    const list = document.getElementById('dev-list');
+    list.innerHTML = devices.slice().sort((a,b)=>a.hostname.localeCompare(b.hostname)).map(d =>
+        `<label class="dev-cell"><input type="checkbox" value="${d.hostname}" onchange="toggleDev(this)"> ${d.hostname} <span style="color:#666;">(${d.role||'?'})</span></label>`
+    ).join('');
+}
+function toggleDev(cb) { if (cb.checked) selected.add(cb.value); else selected.delete(cb.value); }
+function pickAll(on) {
+    selected.clear();
+    document.querySelectorAll('#dev-list input[type=checkbox]').forEach(cb => { cb.checked = on; if (on) selected.add(cb.value); });
+}
+function pickRole(role) {
+    document.querySelectorAll('#dev-list input[type=checkbox]').forEach(cb => {
+        const d = devices.find(x => x.hostname === cb.value);
+        if (d && (d.role||'other') === role) { cb.checked = true; selected.add(cb.value); }
+    });
+}
+function applyPreset() {
+    const v = document.getElementById('preset').value;
+    if (v) document.getElementById('cmd').value = v;
+}
+
+async function runCompare() {
+    const cmd = document.getElementById('cmd').value.trim();
+    const summary = document.getElementById('cmd-summary');
+    const results = document.getElementById('cmd-results');
+    const btn = document.getElementById('run-btn');
+    if (!cmd) { summary.textContent = 'Enter a command first.'; return; }
+    const hosts = [...selected];
+    if (hosts.length === 0) { summary.textContent = 'Select at least one switch.'; return; }
+
+    btn.disabled = true;
+    results.innerHTML = '';
+    summary.innerHTML = `<span class="spin">Running "<code>${escapeHtml(cmd)}</code>" on ${hosts.length} switch(es)…</span>`;
+
+    // Bounded parallel fan-out (reuses ib-api.sh read-only whitelist).
+    const out = {};
+    const pool = 6;
+    let i = 0;
+    async function worker() {
+        while (i < hosts.length) {
+            const h = hosts[i++];
+            try {
+                const r = await fetch('/ib-api.sh?action=run-device-command', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({device:h, command:cmd}),
+                });
+                const d = await r.json().catch(() => ({}));
+                out[h] = d.success ? (d.output || '(no output)') : ('ERROR: ' + (d.error || 'failed'));
+            } catch (e) { out[h] = 'ERROR: ' + e.message; }
+        }
+    }
+    await Promise.all(Array.from({length: Math.min(pool, hosts.length)}, worker));
+
+    // Group by normalized output.
+    const groups = {};
+    for (const h of hosts) {
+        const norm = (out[h] || '').replace(/[ \t]+$/gm, '').trim();
+        (groups[norm] = groups[norm] || []).push(h);
+    }
+    const arr = Object.entries(groups).map(([text, devs]) => ({text, devs}))
+        .sort((a,b) => b.devs.length - a.devs.length);
+
+    const distinct = arr.length;
+    summary.innerHTML = `<code>${escapeHtml(cmd)}</code> — ${hosts.length} switch(es), ` +
+        `<strong>${distinct}</strong> distinct output${distinct===1?'':'s'}` +
+        (distinct === 1 ? ' (all identical).' : ` — ${arr.length-1} outlier group(s) flagged.`);
+
+    results.innerHTML = arr.map((g, idx) => {
+        const outlier = distinct > 1 && idx > 0;   // largest group = baseline; rest = outliers
+        return `<div class="grp ${outlier?'outlier':''}">
+            <div class="grp-head" onclick="this.parentNode.classList.toggle('open')">
+                <span class="grp-badge">${g.devs.length} switch${g.devs.length===1?'':'es'}${outlier?' · outlier':' · baseline'}</span>
+                <span class="grp-devs">${g.devs.map(escapeHtml).join(', ')}</span>
+            </div>
+            <pre class="grp-out">${escapeHtml(g.text || '(empty)')}</pre>
+        </div>`;
+    }).join('');
+    // Auto-open outlier groups so the difference is immediately visible.
+    document.querySelectorAll('#cmd-results .grp.outlier').forEach(el => el.classList.add('open'));
+    btn.disabled = false;
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
