@@ -145,6 +145,10 @@ const CMD_GROUPS = [
     { title:'Management & Network', color:'#f06292', cmds:['show ip interface','show ip route','show ip dhcp','show hosts','show interfaces mgmt0','show management-lldp neighbors','show ntp','show snmp','show ssh server','show users'] },
     { title:'Configuration', color:'#ba68c8', cmds:['show running-config','show configuration'] },
     { title:'Logs & Debug', color:'#ef5350', cmds:['show logging','show log files','show log continuous','show log matching ERR','show log matching WARN','show log matching INFO'] },
+    // NVOS (Quantum-3 / XDR) read-only commands. UNTESTED until an NVOS switch is in the
+    // fabric -- the MLNX-OS groups above stay the default. These are documented `nv show`
+    // equivalents so the operator has them ready when XDR/NVOS switches arrive.
+    { title:'NVOS (beta · untested)', color:'#e0b84a', cmds:['nv show system','nv show system version','nv show platform','nv show platform inventory','nv show platform environment','nv show platform firmware','nv show interface','nv show interface ib','nv show ib','nv show ib sm','nv show health','nv config show'] },
 ];
 
 const POOL = 6;             // max parallel switch sessions

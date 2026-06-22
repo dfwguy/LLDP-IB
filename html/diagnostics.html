@@ -139,6 +139,22 @@
                     <button class="btn btn-primary" id="run-diag-btn" onclick="runFabricDiag()">Run Fabric Diagnostic</button>
                     <span class="diag-status" id="diag-status"></span>
                 </div>
+
+                <div style="margin-top:14px;border-top:1px solid #333;padding-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <label style="font-size:12px;color:#aaa;">Schedule periodic run (on the target above):</label>
+                    <select id="diag-schedule" style="padding:7px 10px;background:#1a1a1a;color:#d4d4d4;border:1px solid #404040;border-radius:4px;">
+                        <option value="0">Off</option>
+                        <option value="1">Every 1 hour</option>
+                        <option value="2">Every 2 hours</option>
+                        <option value="3">Every 3 hours</option>
+                        <option value="4">Every 4 hours</option>
+                        <option value="6">Every 6 hours</option>
+                        <option value="12">Every 12 hours</option>
+                        <option value="24">Every 24 hours</option>
+                    </select>
+                    <button class="btn btn-secondary" style="padding:7px 12px;" onclick="saveSchedule()">Save schedule</button>
+                    <span class="diag-status" id="schedule-status"></span>
+                </div>
             </div>
         </div>
     </div>
@@ -171,6 +187,7 @@ let pollTimer = null;
 document.addEventListener('DOMContentLoaded', () => {
     buildOutputChips();
     loadTargets();
+    loadSchedule();
     loadLatest();
     loadHistory();
     updatePreview();
@@ -308,6 +325,47 @@ function applyFullPreset() {
 function clearFlags() {
     document.querySelectorAll('[data-flag],[data-out]').forEach(cb => cb.checked = false);
     updatePreview();
+}
+
+async function loadSchedule() {
+    try {
+        const r = await fetch('/diag-api.sh?action=get-schedule', {cache:'no-store'});
+        const d = await r.json();
+        if (d && d.success) {
+            const sel = document.getElementById('diag-schedule');
+            if (sel) sel.value = String(d.hours || 0);
+            const status = document.getElementById('schedule-status');
+            if (status && d.hours > 0) {
+                status.style.color = '#888';
+                status.textContent = `Currently every ${d.hours}h${d.target ? ' on ' + d.target : ''}.`;
+            }
+        }
+    } catch (e) { /* schedule simply not shown */ }
+}
+
+async function saveSchedule() {
+    const hours = parseInt(document.getElementById('diag-schedule').value, 10) || 0;
+    const target = document.getElementById('diag-target').value;
+    const status = document.getElementById('schedule-status');
+    if (hours > 0 && !target) {
+        status.style.color = '#ff9800'; status.textContent = 'Pick a target above first.';
+        return;
+    }
+    status.style.color = '#888'; status.textContent = 'Saving…';
+    try {
+        const r = await fetch('/diag-api.sh?action=set-schedule', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ hours, target }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (d.success) {
+            status.style.color = '#81c784';
+            status.textContent = hours === 0 ? 'Schedule turned off.'
+                : `Scheduled every ${hours}h on ${d.target}. Light runs (basic ibdiagnet).`;
+        } else {
+            status.style.color = '#ef5350'; status.textContent = d.error || 'Failed';
+        }
+    } catch (e) { status.style.color = '#ef5350'; status.textContent = e.message; }
 }
 
 async function runFabricDiag() {

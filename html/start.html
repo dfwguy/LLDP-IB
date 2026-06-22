@@ -431,6 +431,10 @@
                     <div class="stat-label">IB Links</div>
                 </div>
                 <div class="stat-item">
+                    <div class="stat-value" id="stat-generation" title="Dominant IB link generation in the fabric">--</div>
+                    <div class="stat-label" id="stat-generation-label">Fabric Generation</div>
+                </div>
+                <div class="stat-item">
                     <div class="stat-value" id="stat-reachable">--</div>
                     <div class="stat-label">Reachable</div>
                 </div>
@@ -712,6 +716,9 @@
             // ---- Top stats (devices.yaml count + reachability + topology counts)
             await loadDeviceStats(topology);
 
+            // ---- Fabric generation (NDR/XDR/HDR/...) + off-generation links
+            renderGeneration(topology);
+
             // ---- Subnet Manager
             if (sm && sm.summary) {
                 const masterGuid = sm.master_guid || (sm.sms || []).find(s => s.state === 'Master')?.guid;
@@ -858,6 +865,36 @@
             const s = String(g);
             if (s.length <= 14) return s;
             return s.slice(0, 10) + '…' + s.slice(-4);
+        }
+
+        // Fabric IB generation from topology link speeds (e.g. "4xNDR" -> NDR).
+        // Shows the dominant generation and flags links below it (mixed-gen fabric).
+        function renderGeneration(topology) {
+            const dist = (topology && topology.summary && topology.summary.speed_distribution) || {};
+            const genCount = {};
+            let total = 0;
+            for (const [speed, n] of Object.entries(dist)) {
+                const m = String(speed).match(/([A-Za-z]{2,4})\s*$/);
+                const gen = m ? m[1].toUpperCase() : 'UNKNOWN';
+                genCount[gen] = (genCount[gen] || 0) + (n || 0);
+                total += (n || 0);
+            }
+            const valEl = document.getElementById('stat-generation');
+            const lblEl = document.getElementById('stat-generation-label');
+            if (!valEl) return;
+            if (total === 0) { valEl.textContent = '--'; return; }
+            let dom = '-', domN = 0;
+            for (const g in genCount) if (genCount[g] > domN) { domN = genCount[g]; dom = g; }
+            const gens = Object.keys(genCount);
+            const offGen = total - domN;
+            valEl.textContent = dom + (gens.length > 1 ? ' (mixed)' : '');
+            valEl.style.color = gens.length > 1 ? '#ff9800' : '#76b900';
+            valEl.title = gens.map(g => `${genCount[g]}x ${g}`).join(', ');
+            if (offGen > 0) {
+                lblEl.innerHTML = `Fabric Generation &middot; <span style="color:#ff9800;">${offGen} below ${dom}</span>`;
+            } else {
+                lblEl.textContent = 'Fabric Generation';
+            }
         }
 
         async function loadDeviceStats(topology) {

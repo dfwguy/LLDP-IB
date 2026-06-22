@@ -1049,6 +1049,30 @@
                     </div>
                 </div>
             </div>
+
+            <!-- NVOS (Quantum-3 / XDR) - read-only `nv show`. UNTESTED until an NVOS
+                 switch is in the fabric; the MLNX-OS groups above are the default. -->
+            <div class="command-group collapsed">
+                <div class="command-group-title" onclick="toggleGroup(this.parentElement)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e0b84a" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    <span style="color: #e0b84a;">NVOS (beta · untested)</span>
+                </div>
+                <div class="command-group-content">
+                    <div class="command-buttons">
+                        <button class="cmd-btn" onclick="runCommand('nv show system')">nv show system</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show system version')">nv show system version</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show platform')">nv show platform</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show platform inventory')">platform inventory</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show platform environment')">platform environment</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show platform firmware')">platform firmware</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show interface ib')">nv show interface ib</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show ib')">nv show ib</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show ib sm')">nv show ib sm</button>
+                        <button class="cmd-btn" onclick="runCommand('nv show health')">nv show health</button>
+                        <button class="cmd-btn" onclick="runCommand('nv config show')">nv config show</button>
+                    </div>
+                </div>
+            </div>
             </div><!-- end command-groups-grid -->
             
             <!-- Custom Command -->

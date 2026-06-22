@@ -75,6 +75,19 @@ def host_of(desc, fallback=""):
     return str(desc).split(":")[0].strip() or fallback
 
 
+def detect_os(sw_version, sys_type=""):
+    """Best-effort switch OS from UFM's version/type strings. UFM is OS-agnostic, but
+    the per-switch SSH layer (hardware/configs/Command Runner) is not -- so we surface
+    which OS each switch runs. MLNX-OS reports "3.x.xxxx"; NVOS reports an "nvos"/"nv_os"
+    marker or a 25.xx-style train. Heuristic, refined once XDR/NVOS samples exist."""
+    s = (str(sw_version or "") + " " + str(sys_type or "")).lower()
+    if "nvos" in s or "nv_os" in s or "nvidia os" in s:
+        return "NVOS"
+    if "cumulus" in s:
+        return "Cumulus"
+    return "MLNX-OS"
+
+
 def role_map(ufm_role, is_switch):
     """Map UFM roles to LLDPq roles (spine/leaf/core/host)."""
     r = (ufm_role or "").lower()
@@ -135,6 +148,7 @@ def build_indexes(systems, ports):
             "fw": s.get("fw_version") or s.get("sw_version") or "",
             "uptime": s.get("uptime") or "",
             "technology": s.get("technology") or "",
+            "os": detect_os(s.get("sw_version") or s.get("fw_version") or "", s.get("type", "")),
         }
     lid_by_guid = {}
     for p in ports or []:
@@ -629,8 +643,11 @@ def build_assets_ini(by_guid, identity=None):
         serial = ident.get("serial") or v["serial"] or "-"
         release = ident.get("release") or v["fw"] or "-"
         uptime = ident.get("uptime") or v["uptime"] or "-"
+        # Real OS per switch (was hard-coded "MLNX-OS"): prefer switch-local identity
+        # (ib-hw-collect `show version`), else the UFM-derived guess.
+        os_name = ident.get("os") or v.get("os") or "MLNX-OS"
         lines.append("\t".join([
-            v["hostname"], v["ip"] or "-", model, serial, release, "MLNX-OS", uptime,
+            v["hostname"], v["ip"] or "-", model, serial, release, os_name, uptime,
         ]))
     return "\n".join(lines) + "\n"
 

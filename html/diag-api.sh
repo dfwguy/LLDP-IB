@@ -324,6 +324,140 @@ print(json.dumps({
 PY
         ;;
 
+    get-schedule)
+        # Report the current periodic ibdiagnet schedule (from the lldpq user crontab).
+        python3 <<'PY'
+import json, os, re, subprocess
+try:
+    r = subprocess.run(['sudo', '-n', '-u', 'lldpq', 'bash', '-c', 'crontab -l 2>/dev/null'],
+                       capture_output=True, text=True, timeout=10)
+    txt = r.stdout or ''
+except Exception:
+    txt = ''
+line = next((l for l in txt.splitlines() if 'run-ibdiagnet.sh' in l and not l.strip().startswith('#')), '')
+hours, target = 0, ''
+if line:
+    parts = line.split()
+    if len(parts) >= 5:
+        minute, hour = parts[0], parts[1]
+        if hour.startswith('*/'):
+            try: hours = int(hour[2:])
+            except Exception: hours = 0
+        elif hour == '*':
+            hours = 1
+        elif hour == '0' and minute == '0':
+            hours = 24
+    m = re.search(r"IBDIAG_TARGET='([^']*)'", line)
+    target = m.group(1) if m else ''
+print(json.dumps({'success': True, 'hours': hours, 'target': target}))
+PY
+        ;;
+
+    set-schedule)
+        if [ "${REQUEST_METHOD:-GET}" != "POST" ]; then
+            echo '{"success": false, "error": "set-schedule requires POST"}'
+            exit 0
+        fi
+        read -r POST_DATA
+        export POST_DATA
+        python3 <<'PY'
+import json, os, re, shlex, subprocess
+
+ALLOWED_HOURS = {0, 1, 2, 3, 4, 6, 12, 24}
+lldpq_dir = os.environ.get('LLDPQ_DIR', '/home/lldpq/lldpq')
+
+try:
+    body = json.loads(os.environ.get('POST_DATA') or '{}')
+except Exception:
+    body = {}
+try:
+    hours = int(body.get('hours', 0))
+except Exception:
+    hours = -1
+if hours not in ALLOWED_HOURS:
+    print(json.dumps({'success': False, 'error': 'Invalid interval (allowed: 0,1,2,3,4,6,12,24h)'}))
+    raise SystemExit
+
+target_id = str(body.get('target', '')).strip()
+
+def install(cron_line):
+    if cron_line:
+        inner = ('( crontab -l 2>/dev/null | grep -v run-ibdiagnet.sh; '
+                 f'echo {shlex.quote(cron_line)} ) | crontab -')
+    else:
+        inner = '( crontab -l 2>/dev/null | grep -v run-ibdiagnet.sh ) | crontab -'
+    r = subprocess.run(['sudo', '-n', '-u', 'lldpq', 'bash', '-c', inner],
+                       capture_output=True, text=True, timeout=15)
+    return r.returncode == 0, (r.stderr or r.stdout)
+
+# hours == 0 -> turn the schedule OFF (remove the line)
+if hours == 0:
+    ok, err = install('')
+    if not ok:
+        print(json.dumps({'success': False, 'error': f'Failed to clear schedule: {err[:200]}'}))
+        raise SystemExit
+    print(json.dumps({'success': True, 'hours': 0, 'target': ''}))
+    raise SystemExit
+
+if not target_id:
+    print(json.dumps({'success': False, 'error': 'No target selected'}))
+    raise SystemExit
+
+# Resolve target (same rules as the manual run action).
+ufm_host = os.environ.get('UFM_SSH_HOST', '')
+ufm_user = os.environ.get('UFM_SSH_USER', 'root')
+host = user = bin_path = docker_ct = ''
+if target_id == 'ufm':
+    if not ufm_host:
+        print(json.dumps({'success': False,
+            'error': 'UFM SSH host not configured. Set up UFM SSH first, then schedule.'}))
+        raise SystemExit
+    host, user = ufm_host, ufm_user
+    bin_path = os.environ.get('IBDIAGNET_BIN') or '/opt/ufm/opensm/bin/ibdiagnet'
+    docker_ct = os.environ.get('IBDIAGNET_DOCKER') or 'ufm'
+else:
+    try:
+        import yaml
+        data = yaml.safe_load(open(lldpq_dir + '/devices.yaml')) or {}
+        duser = (data.get('defaults', {}) or {}).get('username', 'admin')
+        for ip, val in (data.get('devices', {}) or {}).items():
+            hn, u = '', duser
+            if isinstance(val, str):
+                hn = (val.strip().split() or [''])[0]
+            elif isinstance(val, dict):
+                hn, u = val.get('hostname', ''), val.get('username', duser)
+            if hn == target_id:
+                host, user, bin_path = ip, u, 'ibdiagnet'
+                break
+    except Exception as e:
+        print(json.dumps({'success': False, 'error': f'Cannot read devices.yaml: {e}'}))
+        raise SystemExit
+    if not host:
+        print(json.dumps({'success': False, 'error': f'Unknown target: {target_id}'}))
+        raise SystemExit
+
+# cron schedule expression
+if hours == 1:
+    expr = '0 * * * *'
+elif hours >= 24:
+    expr = '0 0 * * *'
+else:
+    expr = f'0 */{hours} * * *'
+
+env_parts = [f"IBDIAG_TARGET='{host}'", f"IBDIAG_USER='{user}'", f"IBDIAG_BIN='{bin_path}'"]
+if docker_ct:
+    env_parts.append(f"IBDIAG_DOCKER='{docker_ct}'")
+runner = os.path.join(lldpq_dir, 'run-ibdiagnet.sh')
+cron_line = f"{expr} {' '.join(env_parts)} {runner} >/dev/null 2>&1"
+
+ok, err = install(cron_line)
+if not ok:
+    print(json.dumps({'success': False, 'error': f'Failed to install schedule: {err[:200]}'}))
+    raise SystemExit
+print(json.dumps({'success': True, 'hours': hours, 'target': target_id}))
+PY
+        ;;
+
     *)
         echo "{\"success\": false, \"error\": \"Unknown action: ${ACTION}\"}"
         ;;

@@ -79,13 +79,14 @@
                     <th class="sortable" onclick="sortBy('role')">Role<span class="sort-arrow" id="arr-role"></span></th>
                     <th class="sortable" onclick="sortBy('model')">Model<span class="sort-arrow" id="arr-model"></span></th>
                     <th class="sortable" onclick="sortBy('serial')">Serial<span class="sort-arrow" id="arr-serial"></span></th>
-                    <th class="sortable" onclick="sortBy('release')">MLNX-OS<span class="sort-arrow" id="arr-release"></span></th>
+                    <th class="sortable" onclick="sortBy('os')">OS<span class="sort-arrow" id="arr-os"></span></th>
+                    <th class="sortable" onclick="sortBy('release')">Version<span class="sort-arrow" id="arr-release"></span></th>
                     <th class="sortable" onclick="sortBy('uptime')">Uptime<span class="sort-arrow" id="arr-uptime"></span></th>
                     <th>Status</th>
                 </tr>
             </thead>
             <tbody id="assets-table">
-                <tr><td colspan="8"><div class="loading"><div class="spinner"></div>Loading assets...</div></td></tr>
+                <tr><td colspan="9"><div class="loading"><div class="spinner"></div>Loading assets...</div></td></tr>
             </tbody>
         </table>
     </div>
@@ -306,6 +307,7 @@ async function loadAssets() {
             role: d.role,
             model: r.model || '-',
             serial: r.serial || '-',
+            os: r.os || '-',
             release: r.release || '-',
             uptime: r.uptime || '-',
             reachable: !!reachable[d.hostname],
@@ -370,19 +372,23 @@ function renderTable() {
     });
     const tbody = document.getElementById('assets-table');
     if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8"><div class="no-data"><h3>No devices match filter</h3></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9"><div class="no-data"><h3>No devices match filter</h3></div></td></tr>';
         return;
     }
     tbody.innerHTML = rows.map(a => {
         const statusBadge = a.reachable
             ? '<span class="badge badge-green">OK</span>'
             : '<span class="badge badge-red">unreachable</span>';
+        const osBadge = (a.os && a.os !== '-')
+            ? `<span class="badge ${/nvos/i.test(a.os) ? 'badge-yellow' : 'badge-blue'}">${a.os}</span>`
+            : '-';
         return `<tr>
             <td><strong><a href="device.html?device=${encodeURIComponent(a.hostname)}" style="color: #76b900; text-decoration: none;">${a.hostname}</a></strong></td>
             <td class="mono">${a.ip || '-'}</td>
             <td><span class="badge badge-blue">${a.role || '-'}</span></td>
             <td>${a.model || '-'}</td>
             <td class="mono">${a.serial || '-'}</td>
+            <td>${osBadge}</td>
             <td>${a.release || '-'}</td>
             <td>${a.uptime || '-'}</td>
             <td>${statusBadge}</td>
@@ -392,10 +398,10 @@ function renderTable() {
 
 function downloadCSV() {
     const rows = getFiltered();
-    const headers = ['Hostname', 'IP', 'Role', 'Model', 'Serial', 'MLNX-OS', 'Uptime', 'Status'];
+    const headers = ['Hostname', 'IP', 'Role', 'Model', 'Serial', 'OS', 'Version', 'Uptime', 'Status'];
     const lines = [headers.join(',')];
     for (const a of rows) {
-        const fields = [a.hostname, a.ip, a.role, a.model, a.serial, a.release, a.uptime, a.reachable ? 'OK' : 'unreachable'];
+        const fields = [a.hostname, a.ip, a.role, a.model, a.serial, a.os, a.release, a.uptime, a.reachable ? 'OK' : 'unreachable'];
         lines.push(fields.map(v => `"${(v || '').replace(/"/g, '""')}"`).join(','));
     }
     const blob = new Blob([lines.join('\n')], {type: 'text/csv'});

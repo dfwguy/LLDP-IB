@@ -258,6 +258,8 @@ for p in FORBIDDEN_PATTERNS:
 # -------- Allowed top-level patterns (left side of any pipe) ----------
 ALLOWED_PATTERNS = [
     r'^show\b',                # MLNX-OS native show commands
+    r'^nv\s+show\b',            # NVOS (Quantum-3/XDR) read-only show
+    r'^nv\s+config\s+show\b',   # NVOS read-only config display (nv set/apply stay blocked)
     r'^ib\s+\w+',               # ibutils via CLI prefix (ib sminfo, ib perfquery, ...)
     r'^ip\s+(?:link|addr|route|neigh)\b',  # Linux shell allowed reads
     r'^uptime$',
