@@ -671,7 +671,11 @@
 
         async function fetchJson(path) {
             try {
-                const r = await fetch(path + '?t=' + Date.now(), { cache: 'no-store' });
+                // Use '&' when the path already has a query string (e.g.
+                // /ufm-api.sh?action=status) so the cache-buster doesn't corrupt it
+                // into '...?action=status?t=...' (which breaks CGI action parsing).
+                const sep = path.includes('?') ? '&' : '?';
+                const r = await fetch(path + sep + 't=' + Date.now(), { cache: 'no-store' });
                 if (!r.ok) return null;
                 return await r.json();
             } catch (e) {
