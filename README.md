@@ -120,6 +120,41 @@ To regenerate the dataset (e.g. tweak counts), edit
 
 ## Quick Start (Docker only)
 
+### Prerequisite — install Docker (Ubuntu)
+
+Skip this if Docker is already installed (`docker --version` works). Otherwise, on
+Ubuntu 20.04 / 22.04 / 24.04:
+
+```bash
+# Docker's official repo (recommended — current Engine + buildx)
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Start on boot + now, then verify
+sudo systemctl enable --now docker
+sudo docker run --rm hello-world
+```
+
+Quick alternative (Ubuntu's bundled package, older but fine for just running the image):
+
+```bash
+sudo apt-get update && sudo apt-get install -y docker.io
+sudo systemctl enable --now docker
+```
+
+> Run the `docker` commands below with `sudo` (or add yourself to the `docker`
+> group: `sudo usermod -aG docker $USER`, then log out/in).
+
+### Download & run
+
 LLDPq-IB ships as a pre-built Docker image. Download, load, run:
 
 ```bash
